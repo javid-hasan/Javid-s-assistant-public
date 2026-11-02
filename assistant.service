@@ -1,0 +1,13 @@
+[Unit]
+Description=Telegram AI personal assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/assistant-bot
+ExecStart=/opt/assistant-bot/venv/bin/python bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
