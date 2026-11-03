@@ -91,7 +91,7 @@ TEXTS = {
             "/plan - AI plan for today\n"
             "/agenda - tasks and reminders at a glance\n"
             "/workout - today's workout with log buttons\n"
-            "/sheet - link to your workout Google Sheet\n"
+            "/sheet - link to your workout Google Sheet (/sheet rebuild to rebuild the dashboard)\n"
             "/reset - clear conversation memory\n"
             "/setkey NAME value - change a setting or key (your message is deleted)"
         ),
@@ -164,6 +164,9 @@ TEXTS = {
         "sheet_off": "Google Sheet isn't connected yet. Send the key file, then /setkey "
                      "GOOGLE_SHEET_ID with the sheet's link.",
         "sheet_backfill": "📥 Copied your {n} earlier workouts into the Log.",
+        "sheet_rebuilt": "🔄 Dashboard rebuilt. I set the sheet's region to United States so the "
+                         "formulas work (decimals now use a dot: 62.5). Your Log and Program "
+                         "data were not touched:\n{url}",
     },
     "az": {
         "help": (
@@ -184,7 +187,7 @@ TEXTS = {
             "/plan - bugünkü plan\n"
             "/gundem - tapşırıqlar və xatırlatmalar\n"
             "/mesq - bugünkü məşq və qeyd düymələri\n"
-            "/cedvel - Google Sheet məşq cədvəlinin linki\n"
+            "/cedvel - Google Sheet məşq cədvəlinin linki (/cedvel yenilə - paneli yenidən qur)\n"
             "/sifirla - söhbət yaddaşını təmizlə\n"
             "/setkey AD dəyər - ayar və ya açar dəyiş (mesajınız silinir)"
         ),
@@ -267,6 +270,9 @@ TEXTS = {
         "sheet_off": "Google Sheet hələ qoşulmayıb. Açar faylını göndərin, sonra /setkey "
                      "GOOGLE_SHEET_ID və cədvəlin linkini yazın.",
         "sheet_backfill": "📥 Əvvəlki {n} məşqinizi Gündəlik vərəqinə köçürdüm.",
+        "sheet_rebuilt": "🔄 Panel yenidən quruldu. Formulların işləməsi üçün cədvəlin regionunu "
+                         "United States etdim (onluq kəsrlər indi nöqtə ilə yazılır: 62.5). "
+                         "Gündəlik və Proqram məlumatlarınıza toxunulmadı:\n{url}",
     },
 }
 
@@ -716,7 +722,8 @@ def a1(tab, cells) -> str:
 
 async def sheet_meta(force=False):
     if force or _meta["data"] is None or time.time() - _meta["at"] > 300:
-        _meta["data"] = await gsheet("GET", params={"fields": "properties.title,sheets.properties"})
+        _meta["data"] = await gsheet("GET", params={
+            "fields": "properties.title,properties.locale,sheets.properties"})
         _meta["at"] = time.time()
     return _meta["data"]
 
@@ -935,14 +942,28 @@ def build_dashboard(sid, name, log_name, data_id):
     return reqs, values
 
 
-async def ensure_sheet():
-    """Create any missing tabs (Dashboard, Log, Program, _data). Returns the file's title."""
+async def ensure_sheet(rebuild=False):
+    """Create any missing tabs (Dashboard, Log, Program, _data). Returns the file's title.
+    rebuild=True recreates the Dashboard and _data tabs; Log and Program are never touched."""
     names, ids, props = await tabs(force=True)
+    meta = await sheet_meta()
+    title = meta["properties"]["title"]
+    used = {p["sheetId"] for p in props.values()}
+    reqs, values = [], []
+    if rebuild:
+        for role in ("dash", "data"):
+            if ids[role] is not None:
+                reqs.append({"deleteSheet": {"sheetId": ids[role]}})
+                props.pop(names[role], None)
+                ids[role] = None
     missing = [role for role in ROLES if ids[role] is None]
-    title = (await sheet_meta())["properties"]["title"]
     if not missing:
         return title
-    used = {p["sheetId"] for p in props.values()}
+    # Formulas are written in English with commas. Sheets in some regions (e.g. Turkey)
+    # expect their own function names and ";" separators, so use the US format here.
+    if meta["properties"].get("locale") != "en_US":
+        reqs.append({"updateSpreadsheetProperties": {"properties": {"locale": "en_US"},
+                                                     "fields": "locale"}})
     for i, role in enumerate(ROLES):
         if ids[role] is None:
             new_id = 1001 + i * 10
@@ -955,7 +976,6 @@ async def ensure_sheet():
                  "program": {"rowCount": 300, "columnCount": 8, "frozenRowCount": 1},
                  "data": {"rowCount": 1000, "columnCount": 15}}
     tab_color = {"dash": "#f59e0b", "log": "#16a34a", "program": "#2563eb", "data": "#9ca3af"}
-    reqs, values = [], []
     for index, role in enumerate(ROLES):
         if role in missing:
             p = {"sheetId": ids[role], "title": names[role], "index": index,
@@ -996,8 +1016,19 @@ def parse_day(value):
     return datetime.strptime(value, "%Y-%m-%d").date() if value else today_date()
 
 
+def to_number(x):
+    """60 -> 60, "60 kq" -> 60.0, "62,5" -> 62.5, "abc" -> None"""
+    if isinstance(x, (int, float)) and not isinstance(x, bool):
+        return x
+    found = re.search(r"\d+(?:[.,]\d+)?", str(x if x is not None else ""))
+    return float(found.group().replace(",", ".")) if found else None
+
+
 def num(x) -> str:
-    return str(int(x)) if float(x).is_integer() else str(x)
+    n = to_number(x)
+    if n is None:
+        return str(x)
+    return str(int(n)) if float(n).is_integer() else str(n)
 
 
 def clean_num(x):
@@ -1032,7 +1063,7 @@ def total_reps(e) -> int:
         return 0
     if "," in reps:  # "10,8,6" = reps of each set
         return sum(nums)
-    return nums[0] * int(e.get("sets") or 1)  # "8" or "8-10" (counts the lower number)
+    return nums[0] * int(to_number(e.get("sets")) or 1)  # "8" or "8-10" (lower number)
 
 
 def reps_cell(value):
@@ -1064,12 +1095,24 @@ def cell_date(value):
     return None
 
 
+DAY_ABBREVIATIONS = {"be": "MO", "ça": "TU", "ç": "WE", "ca": "TH", "c": "FR", "ş": "SA", "b": "SU"}
+PLAIN = str.maketrans("əçşğöüı", "ecsgoui")
+
+
 def weekday_code(text):
+    """Day name in Azerbaijani or English, full or short, with or without special letters."""
     t = fold(str(text))
     for lang in SHEET_TEXTS.values():
         for i, name in enumerate(lang["days"]):
             if fold(name) == t:
                 return WEEKDAYS[i]
+    short = t.replace(".", "").replace(" ", "")
+    if short in DAY_ABBREVIATIONS:  # B.e., Ç.a., Ç., C.a., C., Ş., B.
+        return DAY_ABBREVIATIONS[short]
+    plain = t.translate(PLAIN)
+    for i, name in enumerate(SHEET_TEXTS["az"]["days"]):
+        if fold(name).translate(PLAIN) == plain:  # "Cersenbe axsami"
+            return WEEKDAYS[i]
     return t[:2].upper() if t[:2].upper() in WEEKDAYS else None  # "MO", "Mon", "Monday"
 
 
@@ -1082,13 +1125,14 @@ def log_rows(wid, day, title, status, exercises, duration_min, feeling, notes):
     note = " · ".join(x for x in (notes or "", extra) if x)
     rows = []
     for i, e in enumerate(exercises or [{"name": "—"}]):
-        weight = e.get("weight_kg") or ""
+        weight = to_number(e.get("weight_kg")) or ""
         reps = total_reps(e)
         volume = round(reps * float(weight), 1) if reps and weight else ""
         first = i == 0
         rows.append([serial, week, text_cell(title), text_cell(e.get("name") or "—"),
-                     e.get("sets") or "", reps_cell(e.get("reps")), weight, volume,
-                     e.get("duration_min") or "", e.get("distance_km") or "", mark,
+                     to_number(e.get("sets")) or "", reps_cell(e.get("reps")), weight, volume,
+                     to_number(e.get("duration_min")) or "", to_number(e.get("distance_km")) or "",
+                     mark,
                      text_cell(feeling) if first else "", text_cell(note) if first else "",
                      wid, 1 if first else 0])
     return rows
@@ -1126,8 +1170,15 @@ def parse_program(rows):
             ex = {"name": name}
             for key, idx in (("sets", 3), ("reps", 4), ("weight_kg", 5), ("duration_min", 6),
                              ("notes", 7)):
-                if r[idx] not in ("", None):
-                    ex[key] = cell_id(r[idx]) if key == "reps" else clean_num(r[idx])
+                if r[idx] in ("", None):
+                    continue
+                if key == "reps":
+                    ex[key] = cell_id(r[idx])
+                elif key == "notes":
+                    ex[key] = str(r[idx])
+                else:  # sets, weight, minutes: keep the number even if typed as "60 kq"
+                    value = to_number(r[idx])
+                    ex[key] = clean_num(value) if value is not None else str(r[idx])
             current["exercises"].append(ex)
     return days
 
@@ -1865,12 +1916,15 @@ async def sheet_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     if not sheets_on():
         return await update.message.reply_text(T["sheet_off"])
+    rebuild = bool(ctx.args) and fold(ctx.args[0]).translate(PLAIN) in (
+        "yenile", "rebuild", "refresh", "reset")
     try:
-        await ensure_sheet()
+        await ensure_sheet(rebuild=rebuild)
     except Exception:
         log.exception("Sheet check failed")
         return await update.message.reply_text(T["sheet_bad"])
-    await update.message.reply_text(T["sheet_link"].format(url=sheet_url()))
+    text = T["sheet_rebuilt"] if rebuild else T["sheet_link"]
+    await update.message.reply_text(text.format(url=sheet_url()))
 
 
 async def json_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
