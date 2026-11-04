@@ -169,10 +169,11 @@ TEXTS = {
                      "GOOGLE_SHEET_ID with the sheet's link.",
         "sheet_backfill": "📥 Copied your {n} earlier workouts into the Log.",
         "sheet_columns": "\n\n🧩 Your own columns:\nProgram: {program}\nLog: {log}",
-        "sheet_missing": "\n\n⚠️ I couldn't find these columns: {fields}. Please keep their "
-                         "header names.",
-        "sheet_moved": "\n\n⚠️ The Log columns have moved. Send /sheet rebuild to update the "
-                       "Dashboard formulas.",
+        "sheet_missing": "\n\n⚠️ The bot can't work without these columns: {fields}. Add them "
+                         "back anywhere, with that header name.",
+        "sheet_unused": "\n\nℹ️ Not in your sheet, the bot works without them: {fields}",
+        "sheet_migrate": "\n\n⚠️ The Dashboard is still in the old format. Send /sheet rebuild "
+                         "once: after that it keeps working whatever columns you add or delete.",
         "fin_ok": "✅ Finance sheet connected: {title} → “{tab}”\nThis month: {month}, Actual "
                   "column {col}, {n} items found.",
         "fin_bad": "⚠️ I can't read the finance sheet yet: {err}",
@@ -292,10 +293,11 @@ TEXTS = {
                      "GOOGLE_SHEET_ID və cədvəlin linkini yazın.",
         "sheet_backfill": "📥 Əvvəlki {n} məşqinizi Gündəlik vərəqinə köçürdüm.",
         "sheet_columns": "\n\n🧩 Sizin əlavə sütunlarınız:\nProqram: {program}\nGündəlik: {log}",
-        "sheet_missing": "\n\n⚠️ Bu sütunları tapa bilmədim: {fields}. Zəhmət olmasa onların "
-                         "başlıq adlarını saxlayın.",
-        "sheet_moved": "\n\n⚠️ Gündəlik sütunlarının yeri dəyişib. Panel formullarını yeniləmək "
-                       "üçün /cedvel yenilə göndərin.",
+        "sheet_missing": "\n\n⚠️ Bot bu sütunlar olmadan işləyə bilməz: {fields}. Onları istənilən "
+                         "yerə bu başlıq adı ilə geri əlavə edin.",
+        "sheet_unused": "\n\nℹ️ Cədvəlinizdə yoxdur, bot onlarsız işləyir: {fields}",
+        "sheet_migrate": "\n\n⚠️ Panel hələ köhnə formadadır. Bir dəfə /cedvel yenilə göndərin: "
+                         "bundan sonra sütun əlavə edib silsəniz də Panel avtomatik işləyəcək.",
         "fin_ok": "✅ Maliyyə cədvəli qoşuldu: {title} → “{tab}”\nBu ay: {month}, Actual sütunu "
                   "{col}, {n} maddə tapıldı.",
         "fin_bad": "⚠️ Maliyyə cədvəlini hələ oxuya bilmirəm: {err}",
@@ -648,12 +650,12 @@ async def todoist_list_projects(uid):
 # ------------------------------------------------------ Google Sheets
 SHEETS_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
 WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
-ROLES = ("dash", "log", "program", "data")
+ROLES = ("dash", "log", "program", "data", "raw")
 EPOCH = datetime(1899, 12, 30).date()  # Google Sheets day zero
 
 SHEET_TEXTS = {
     "en": {
-        "tab_dash": "Dashboard", "tab_log": "Log", "tab_program": "Program", "tab_data": "_data",
+        "tab_dash": "Dashboard", "tab_log": "Log", "tab_program": "Program", "tab_data": "_data", "tab_raw": "_log",
         "log_headers": ["Date", "Week", "Workout", "Exercise", "Sets", "Reps", "Weight (kg)",
                         "Volume (kg)", "Duration (min)", "Distance (km)", "Status", "Feeling",
                         "Notes", "Workout ID", "Count"],
@@ -675,7 +677,7 @@ SHEET_TEXTS = {
                          "Volume (kg)"],
     },
     "az": {
-        "tab_dash": "Panel", "tab_log": "Gündəlik", "tab_program": "Proqram", "tab_data": "_data",
+        "tab_dash": "Panel", "tab_log": "Gündəlik", "tab_program": "Proqram", "tab_data": "_data", "tab_raw": "_log",
         "log_headers": ["Tarix", "Həftə", "Məşq", "Hərəkət", "Set", "Təkrar", "Çəki (kq)",
                         "Həcm (kq)", "Müddət (dəq)", "Məsafə (km)", "Status", "Əhval", "Qeyd",
                         "Məşq ID", "Say"],
@@ -752,18 +754,47 @@ def fill_formula(formula, cols, **names):
     return out
 
 
+# Header names the bot recognises for each of its fields (compared without case, spaces,
+# punctuation or special letters; longer names win, e.g. "Məşq ID" before "Məşq").
+FIELD_NAMES = {
+    "date": ("tarix", "date", "tarih"),
+    "week": ("hefte", "week", "hafta"),
+    "workout": ("mesq", "workout", "antrenman", "mesqnovu", "mesqadi"),
+    "exercise": ("hereket", "exercise", "egzersiz", "idmanhereketi"),
+    "sets": ("set", "sets", "setler", "dest"),
+    "reps": ("tekrar", "reps", "tekrarlar", "repetitions"),
+    "weight": ("ceki", "weight", "agirliq", "kq", "kg"),
+    "volume": ("hecm", "volume"),
+    "duration": ("muddet", "duration", "vaxt", "sure"),
+    "distance": ("mesafe", "distance", "km"),
+    "status": ("status", "veziyyet", "durum"),
+    "feeling": ("ehval", "feeling", "his", "hiss"),
+    "notes": ("qeyd", "notes", "note", "serh", "aciqlama"),
+    "wid": ("mesqid", "workoutid"),
+    "count": ("say", "count"),
+    "day": ("gun", "day", "heftegunu", "hefteningunu"),
+}
+ESSENTIAL = {"log": ("date", "exercise"), "program": ("day", "exercise")}
+COLS_TTL = 15  # seconds; writes always re-read the headers
+
+
+def field_of(key, fields):
+    best = None
+    for field in fields:
+        for name in FIELD_NAMES[field]:
+            if key == name or (len(name) >= 4 and key.startswith(name)):
+                if best is None or len(name) > best[1]:
+                    best = (field, len(name))
+    return best[0] if best else None
+
+
 async def tab_columns(role, force=False):
-    """Find the columns of the Log or Program tab by their header names (row 1).
-    Columns the user added are returned as 'extras' (position + header)."""
+    """Read row 1 of the Log or Program tab and find each field by its header name.
+    Deleted columns are simply missing; added or unknown ones are the user's own."""
     cached = _cols.get(role)
-    if cached and not force and time.time() - cached["at"] < 120:
+    if cached and not force and time.time() - cached["at"] < COLS_TTL:
         return cached
     fields = LOG_FIELDS if role == "log" else PROGRAM_FIELDS
-    headers_key = "log_headers" if role == "log" else "program_headers"
-    known = {}
-    for texts in SHEET_TEXTS.values():
-        for field, header in zip(fields, texts[headers_key]):
-            known[header_key(header)] = field
     names, _, _ = await tabs()
     data = await gsheet("GET", f"/values/{a1(names[role], 'A1:ZZ1')}")
     header = (data.get("values") or [[]])[0]
@@ -772,28 +803,88 @@ async def tab_columns(role, force=False):
         k = header_key(h)
         if not k:
             continue
-        field = known.get(k)
+        field = field_of(k, fields)
         if field and field not in found:
             found[field] = c
         else:
             extras.append((c, str(h).strip()))
-    # A renamed header (no columns added overall) keeps its old meaning.
-    filled = sum(1 for h in header if header_key(h))
-    for i, field in enumerate(fields):
-        if field in found:
-            continue
-        taken = i in found.values()
-        extra_here = next((x for x in extras if x[0] == i), None)
-        if not taken and (extra_here is None or filled <= len(fields)):
-            found[field] = i
-            if extra_here:
-                extras.remove(extra_here)
-    texts = SHEET_TEXTS[LANG][headers_key]
+    texts = SHEET_TEXTS[LANG]["log_headers" if role == "log" else "program_headers"]
+    missing = [f for f in fields if f not in found]
     result = {"map": found, "extras": extras, "at": time.time(),
-              "width": max(list(found.values()) + [c for c, _ in extras] + [len(fields) - 1]) + 1,
-              "missing": [texts[i] for i, f in enumerate(fields) if f not in found]}
+              "width": max(list(found.values()) + [c for c, _ in extras] + [0]) + 1,
+              "essential_missing": [texts[fields.index(f)] for f in missing if f in ESSENTIAL[role]],
+              "unused": [texts[fields.index(f)] for f in missing if f not in ESSENTIAL[role]]}
+    result["missing"] = result["essential_missing"]
     _cols[role] = result
     return result
+
+
+# The dashboard reads this hidden tab, which the bot rebuilds from the Log tab in fixed
+# columns. So the Log can have any columns: missing values are worked out here.
+RAW_HEADERS = ["Date", "Week", "Workout", "Exercise", "Weight", "Volume", "Status", "Count"]
+RAW_COLS = {"map": {"date": 0, "week": 1, "workout": 2, "exercise": 3, "weight": 4,
+                    "volume": 5, "status": 6, "count": 7}, "extras": [], "width": 8}
+_raw = {"digest": None}
+
+
+def build_raw(sid, name):
+    return [], [{"range": f"{qt(name)}!A1", "values": [RAW_HEADERS]}]
+
+
+async def sync_raw(force=False):
+    """Copy the Log tab (whatever its columns) into the hidden _log tab for the dashboard."""
+    names, ids, _ = await tabs()
+    if ids["raw"] is None:
+        return False
+    cols = await tab_columns("log", force=True)
+    where = cols["map"]
+    if "date" not in where:
+        return False
+    last = col_letter(cols["width"] - 1)
+    data = await gsheet("GET", f"/values/{a1(names['log'], f'A2:{last}6000')}", params={
+        "valueRenderOption": "UNFORMATTED_VALUE", "dateTimeRenderOption": "SERIAL_NUMBER"})
+
+    def cell(r, field):
+        i = where.get(field)
+        return r[i] if i is not None and i < len(r) else ""
+
+    rows, seen = [], set()
+    for raw in data.get("values", []):
+        r = list(raw)
+        day = cell_date(cell(r, "date"))
+        if not day:
+            continue
+        serial = (day - EPOCH).days
+        workout = str(cell(r, "workout") or "")
+        group = cell_id(cell(r, "wid")) or f"{serial}|{workout}"
+        count = 0 if group in seen else 1  # first row of each workout counts it
+        seen.add(group)
+        weight = to_number(cell(r, "weight")) if cell(r, "weight") not in ("", None) else None
+        volume = to_number(cell(r, "volume")) if cell(r, "volume") not in ("", None) else None
+        if volume is None and weight:
+            reps = total_reps({"reps": cell(r, "reps"), "sets": cell(r, "sets")})
+            volume = round(reps * weight, 1) if reps else None
+        rows.append([serial, serial - day.weekday(), workout, str(cell(r, "exercise") or ""),
+                     "" if weight is None else weight, "" if volume is None else volume,
+                     "⏭" if cell(r, "status") == "⏭" else "✅", count])
+    digest = json.dumps(rows)
+    if not force and digest == _raw["digest"]:
+        return True  # nothing changed since the last copy
+    await gsheet("POST", f"/values/{a1(names['raw'], 'A2:H6000')}:clear", json={})
+    if rows:
+        await gsheet("PUT", f"/values/{a1(names['raw'], 'A2')}",
+                     params={"valueInputOption": "RAW"}, json={"values": rows})
+    _raw["digest"] = digest
+    return True
+
+
+async def sheet_sync_job(ctx: ContextTypes.DEFAULT_TYPE):
+    """Every few minutes: pick up edits the user made by hand in the Log tab."""
+    if sheets_on():
+        try:
+            await sync_raw()
+        except Exception:
+            log.exception("Sheet sync failed")
 
 
 _gcreds = {"c": None}
@@ -1097,27 +1188,27 @@ async def ensure_sheet(rebuild=False):
             used.add(new_id)
             ids[role] = new_id
     grid_size = {"dash": {"rowCount": 80, "columnCount": 12, "hideGridlines": True},
+                 "raw": {"rowCount": 6000, "columnCount": 8},
                  "log": {"rowCount": 5000, "columnCount": 15, "frozenRowCount": 1},
                  "program": {"rowCount": 300, "columnCount": 8, "frozenRowCount": 1},
                  "data": {"rowCount": 1000, "columnCount": 15}}
-    tab_color = {"dash": "#f59e0b", "log": "#16a34a", "program": "#2563eb", "data": "#9ca3af"}
+    tab_color = {"dash": "#f59e0b", "log": "#16a34a", "program": "#2563eb", "data": "#9ca3af",
+                 "raw": "#9ca3af"}
     for index, role in enumerate(ROLES):
         if role in missing:
             p = {"sheetId": ids[role], "title": names[role], "index": index,
                  "gridProperties": grid_size[role], "tabColorStyle": rgb(tab_color[role])}
-            if role == "data":
+            if role in ("data", "raw"):
                 p["hidden"] = True
             reqs.append({"addSheet": {"properties": p}})
-    log_cols = DEFAULT_COLS["log"]
-    if "log" not in missing:  # an existing Log may have extra or moved columns
-        log_cols = await tab_columns("log", force=True)
     builders = {
         "log": lambda: build_log(ids["log"], names["log"]),
         "program": lambda: build_program(ids["program"], names["program"]),
-        "data": lambda: build_data(ids["data"], names["data"], names["log"], names["dash"],
-                                   log_cols),
-        "dash": lambda: build_dashboard(ids["dash"], names["dash"], names["log"], ids["data"],
-                                        log_cols),
+        "raw": lambda: build_raw(ids["raw"], names["raw"]),
+        "data": lambda: build_data(ids["data"], names["data"], names["raw"], names["dash"],
+                                   RAW_COLS),
+        "dash": lambda: build_dashboard(ids["dash"], names["dash"], names["raw"], ids["data"],
+                                        RAW_COLS),
     }
     for role in ROLES:
         if role in missing:
@@ -1135,6 +1226,8 @@ async def ensure_sheet(rebuild=False):
                  json={"valueInputOption": "USER_ENTERED", "data": values})
     await sheet_meta(force=True)
     _cols.clear()
+    if "raw" in missing:
+        await sync_raw(force=True)
     return title
 
 
@@ -1359,7 +1452,7 @@ def parse_program(rows, cols=None):
 
 async def sheet_write_program(days):
     names, _, _ = await tabs()
-    cols = await tab_columns("program")
+    cols = await tab_columns("program", force=True)
     last = col_letter(cols["width"] - 1)  # only columns that have a header are cleared
     await gsheet("POST", f"/values/{a1(names['program'], f'A2:{last}1000')}:clear", json={})
     rows = program_rows(days, cols)
@@ -1425,20 +1518,36 @@ async def sheet_logs():
     return sorted(groups.values(), key=lambda g: g["date"])
 
 
-async def sheet_delete_rows(wid):
+async def sheet_delete_rows(wid, day=None, title=None):
+    """Delete a workout's rows: by its ID column, or by date (+ workout name) if that's gone."""
     names, ids, _ = await tabs()
-    cols = await tab_columns("log")
-    if "wid" not in cols["map"]:
-        return 0
-    letter = col_letter(cols["map"]["wid"])
-    data = await gsheet("GET", f"/values/{a1(names['log'], f'{letter}2:{letter}5000')}",
-                        params={"valueRenderOption": "UNFORMATTED_VALUE"})
-    rows = [i for i, r in enumerate(data.get("values", []), start=1) if r and cell_id(r[0]) == str(wid)]
+    cols = await tab_columns("log", force=True)
+    where = cols["map"]
+    last = col_letter(cols["width"] - 1)
+    data = await gsheet("GET", f"/values/{a1(names['log'], f'A2:{last}6000')}", params={
+        "valueRenderOption": "UNFORMATTED_VALUE", "dateTimeRenderOption": "SERIAL_NUMBER"})
+
+    def cell(r, field):
+        i = where.get(field)
+        return r[i] if i is not None and i < len(r) else ""
+
+    rows = []
+    for i, r in enumerate(data.get("values", []), start=1):
+        if "wid" in where:
+            hit = cell_id(cell(r, "wid")) == str(wid)
+        elif day and "date" in where:
+            hit = cell_date(cell(r, "date")) == day and (
+                "workout" not in where or str(cell(r, "workout")) == (title or ""))
+        else:
+            hit = False
+        if hit:
+            rows.append(i)
     reqs = [{"deleteDimension": {"range": {"sheetId": ids["log"], "dimension": "ROWS",
                                            "startIndex": i, "endIndex": i + 1}}}
             for i in sorted(rows, reverse=True)]
     if reqs:
         await gsheet("POST", ":batchUpdate", json={"requests": reqs})
+        await sync_raw()
     return len(rows)
 
 
@@ -1450,7 +1559,7 @@ async def sheet_backfill(uid):
         await sheet_write_program(program["days"])
     if (await gsheet("GET", f"/values/{a1(names['log'], 'A2:Z3')}")).get("values"):
         return 0
-    cols = await tab_columns("log")
+    cols = await tab_columns("log", force=True)
     rows, copied = [], 0
     for r in db.execute("SELECT * FROM workouts WHERE user_id=? ORDER BY date, id", (uid,)):
         rows += log_rows(r["id"], parse_day(r["date"]), r["title"], r["status"],
@@ -1459,6 +1568,7 @@ async def sheet_backfill(uid):
         copied += 1
     if rows:
         await sheet_append(rows)
+        await sync_raw(force=True)
     return copied
 
 
@@ -1550,9 +1660,10 @@ async def log_workout(uid, exercises, date=None, title=None, duration_min=None,
     if sheets_on():
         try:
             pick = next((e.get("name") for e in exercises if e.get("weight_kg")), None)
-            cols = await tab_columns("log")
+            cols = await tab_columns("log", force=True)
             await sheet_append(log_rows(cur.lastrowid, day, title, status, exercises,
                                         duration_min, feeling, notes, cols, extra), pick)
+            await sync_raw()
             result["sheet"] = "saved"
         except Exception as e:
             log.exception("Writing the workout to the sheet failed")
@@ -1561,12 +1672,13 @@ async def log_workout(uid, exercises, date=None, title=None, duration_min=None,
 
 
 async def delete_workout(uid, workout_id):
-    row = db.execute("SELECT id FROM workouts WHERE id=? AND user_id=?",
+    row = db.execute("SELECT id, date, title FROM workouts WHERE id=? AND user_id=?",
                      (workout_id, uid)).fetchone()
     removed = 0
     if sheets_on():
         try:
-            removed = await sheet_delete_rows(workout_id)
+            removed = await sheet_delete_rows(workout_id, parse_day(row["date"]) if row else None,
+                                              row["title"] if row else None)
         except Exception:
             log.exception("Deleting rows from the sheet failed")
     if row:
@@ -2549,21 +2661,25 @@ async def sheet_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ", ".join(f"{h} ({col_letter(c)})" for c, h in cols["extras"]) or T["none"]
 
     text += T["sheet_columns"].format(program=own(program_cols), log=own(log_cols))
-    missing = program_cols["missing"] + log_cols["missing"]
-    if missing:
-        text += T["sheet_missing"].format(fields=", ".join(missing))
-    if not rebuild:  # are the dashboard formulas still pointing at the right Log columns?
-        try:
-            names, _, _ = await tabs()
+    essential = program_cols["essential_missing"] + log_cols["essential_missing"]
+    if essential:
+        text += T["sheet_missing"].format(fields=", ".join(essential))
+    S = SHEET_TEXTS[LANG]
+    unused = "; ".join(f"{tab}: {', '.join(cols['unused'])}" for tab, cols in (
+        (S["tab_program"], program_cols), (S["tab_log"], log_cols)) if cols["unused"])
+    if unused:
+        text += T["sheet_unused"].format(fields=unused)
+    try:  # is the dashboard already reading the hidden _log tab?
+        names, ids, _ = await tabs()
+        await sync_raw(force=True)
+        if ids["dash"] is not None:
             current = await gsheet("GET", f"/values/{a1(names['dash'], 'A4')}",
                                    params={"valueRenderOption": "FORMULA"})
-            formula = ((current.get("values") or [[""]])[0] or [""])[0]
-            letters = log_letters(log_cols)
-            if formula and sorted(set(re.findall(r"!\$?([A-Z]+)\$?2:", str(formula)))) != sorted(
-                    {letters["{CNT}"], letters["{ST}"]}):
-                text += T["sheet_moved"]
-        except Exception:
-            log.exception("Dashboard formula check failed")
+            formula = str(((current.get("values") or [[""]])[0] or [""])[0])
+            if formula and "_log" not in formula:
+                text += T["sheet_migrate"]
+    except Exception:
+        log.exception("Dashboard check failed")
     await send_long(update, text)
 
 
@@ -2762,6 +2878,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
 
     app.job_queue.run_repeating(check_reminders, interval=30, first=5)
+    app.job_queue.run_repeating(sheet_sync_job, interval=600, first=90)
     schedule_jobs(app.job_queue)
 
     if not ALLOWED:
