@@ -20,6 +20,7 @@ sifirla - Söhbət yaddaşını təmizlə
 komek - Kömək
 mesq - Bugünkü məşq
 cedvel - Məşq cədvəli (Google Sheet)
+maliyye - Bu ayın maliyyəsi
 setkey - Ayar və ya açar dəyiş
 
 English:
@@ -35,6 +36,7 @@ reset - Clear conversation memory
 help - Show help
 workout - Today's workout
 sheet - Workout Google Sheet
+finance - This month's finances
 setkey - Change a setting or key
 """
 
@@ -80,7 +82,8 @@ TEXTS = {
             "- Remind me to call mum tomorrow at 6pm\n"
             "- Plan my day\n"
             "- Create a 3-day gym program for me\n"
-            "- Today: bench press 4x8 60kg, squats 3x10 80kg\n\n"
+            "- Today: bench press 4x8 60kg, squats 3x10 80kg\n"
+            "- Paid 40 AZN for petrol\n\n"
             "Or use commands:\n"
             "/note <text> - save a note\n"
             "/notes [search] - list or search notes\n"
@@ -91,6 +94,7 @@ TEXTS = {
             "/plan - AI plan for today\n"
             "/agenda - tasks and reminders at a glance\n"
             "/workout - today's workout with log buttons\n"
+            "/finance - this month's cash flow\n"
             "/sheet - link to your workout Google Sheet (/sheet rebuild to rebuild the dashboard)\n"
             "/reset - clear conversation memory\n"
             "/setkey NAME value - change a setting or key (your message is deleted)"
@@ -164,6 +168,16 @@ TEXTS = {
         "sheet_off": "Google Sheet isn't connected yet. Send the key file, then /setkey "
                      "GOOGLE_SHEET_ID with the sheet's link.",
         "sheet_backfill": "📥 Copied your {n} earlier workouts into the Log.",
+        "fin_ok": "✅ Finance sheet connected: {title} → “{tab}”\nThis month: {month}, Actual "
+                  "column {col}, {n} items found.",
+        "fin_bad": "⚠️ I can't read the finance sheet yet: {err}",
+        "fin_xlsx": "this file is still an Excel (.xlsx) file. In Google Sheets choose File → "
+                    "Save as Google Sheets, share the new file with the bot as Editor and send "
+                    "its link with /setkey FINANCE_SHEET_ID.",
+        "fin_noaccess": "the bot has no access. Share the file with the bot's address as Editor.",
+        "fin_off": "The finance sheet isn't connected yet. Send /setkey FINANCE_SHEET_ID with "
+                   "the sheet's link.",
+        "fin_title": "💰 {month} · Actual / Forecast (AZN)",
         "sheet_rebuilt": "🔄 Dashboard rebuilt. I set the sheet's region to United States so the "
                          "formulas work (decimals now use a dot: 62.5). Your Log and Program "
                          "data were not touched:\n{url}",
@@ -176,7 +190,8 @@ TEXTS = {
             "- Sabah saat 18:00-da anama zəng etməyi xatırlat\n"
             "- Günümü planla\n"
             "- Mənim üçün həftədə 3 günlük zal proqramı hazırla\n"
-            "- Bu gün: jim 4x8 60 kq, squat 3x10 80 kq\n\n"
+            "- Bu gün: jim 4x8 60 kq, squat 3x10 80 kq\n"
+            "- Benzinə 40 manat verdim\n\n"
             "Əmrlər:\n"
             "/qeyd <mətn> - qeyd saxla\n"
             "/qeydler [söz] - qeydləri göstər və ya axtar\n"
@@ -187,6 +202,7 @@ TEXTS = {
             "/plan - bugünkü plan\n"
             "/gundem - tapşırıqlar və xatırlatmalar\n"
             "/mesq - bugünkü məşq və qeyd düymələri\n"
+            "/maliyye - bu ayın maliyyə xülasəsi\n"
             "/cedvel - Google Sheet məşq cədvəlinin linki (/cedvel yenilə - paneli yenidən qur)\n"
             "/sifirla - söhbət yaddaşını təmizlə\n"
             "/setkey AD dəyər - ayar və ya açar dəyiş (mesajınız silinir)"
@@ -270,6 +286,16 @@ TEXTS = {
         "sheet_off": "Google Sheet hələ qoşulmayıb. Açar faylını göndərin, sonra /setkey "
                      "GOOGLE_SHEET_ID və cədvəlin linkini yazın.",
         "sheet_backfill": "📥 Əvvəlki {n} məşqinizi Gündəlik vərəqinə köçürdüm.",
+        "fin_ok": "✅ Maliyyə cədvəli qoşuldu: {title} → “{tab}”\nBu ay: {month}, Actual sütunu "
+                  "{col}, {n} maddə tapıldı.",
+        "fin_bad": "⚠️ Maliyyə cədvəlini hələ oxuya bilmirəm: {err}",
+        "fin_xlsx": "bu fayl hələ Excel (.xlsx) formatındadır. Google Sheets-də Dosya → Google "
+                    "E-Tablolar olarak kaydet seçin, yeni faylı botla Editor kimi paylaşın və "
+                    "linkini /setkey FINANCE_SHEET_ID ilə göndərin.",
+        "fin_noaccess": "botun bu fayla girişi yoxdur. Faylı botun ünvanı ilə Editor kimi paylaşın.",
+        "fin_off": "Maliyyə cədvəli hələ qoşulmayıb. /setkey FINANCE_SHEET_ID və cədvəlin linkini "
+                   "göndərin.",
+        "fin_title": "💰 {month} · Actual / Forecast (AZN)",
         "sheet_rebuilt": "🔄 Panel yenidən quruldu. Formulların işləməsi üçün cədvəlin regionunu "
                          "United States etdim (onluq kəsrlər indi nöqtə ilə yazılır: 62.5). "
                          "Gündəlik və Proqram məlumatlarınıza toxunulmadı:\n{url}",
@@ -333,6 +359,12 @@ db.executescript(
         id INTEGER PRIMARY KEY, user_id INTEGER, date TEXT, title TEXT,
         status TEXT DEFAULT 'done', exercises TEXT, duration_min REAL, feeling TEXT,
         notes TEXT, event_id TEXT, event_kind TEXT, created_at TEXT);
+    CREATE TABLE IF NOT EXISTS finance_log (
+        id INTEGER PRIMARY KEY, user_id INTEGER, date TEXT, item TEXT, amount REAL,
+        description TEXT, tab TEXT, cell TEXT, row INTEGER, col INTEGER, old_value TEXT,
+        new_total REAL, old_note TEXT, undone INTEGER DEFAULT 0, created_at TEXT);
+    CREATE TABLE IF NOT EXISTS finance_rules (
+        user_id INTEGER, keyword TEXT, item TEXT, PRIMARY KEY (user_id, keyword));
     """
 )
 
@@ -700,10 +732,10 @@ def _google_token() -> str:
     return _gcreds["c"].token
 
 
-async def gsheet(method, path="", **kw):
-    """Call the Google Sheets API for the connected spreadsheet."""
+async def gsheet(method, path="", book=None, **kw):
+    """Call the Google Sheets API (workout sheet by default, or another file by ID)."""
     token = await asyncio.to_thread(_google_token)
-    r = await http.request(method, f"{SHEETS_BASE}/{sheet_key()}{path}",
+    r = await http.request(method, f"{SHEETS_BASE}/{book or sheet_key()}{path}",
                            headers={"Authorization": f"Bearer {token}"}, **kw)
     if r.status_code >= 400:
         raise RuntimeError(f"Google Sheets error {r.status_code}: {r.text[:200]}")
@@ -1419,12 +1451,378 @@ async def workout_history(uid, days=30, exercise=None):
     return out
 
 
+# ----------------------------------------------------------- finance
+# The user's own cash-flow model in Google Sheets: CF item names in one column,
+# and for every month a "Forecast" and an "Actual" column (month name in the row
+# above). Daily amounts are added to the month's Actual cell as =250+10+5 and each
+# one is also written into the cell's note as "date · description · amount".
+MONTH_PREFIXES = {  # first letters (without special letters) in Turkish, Azerbaijani, English
+    1: ("oca", "yan", "jan"), 2: ("sub", "fev", "feb"), 3: ("mar",), 4: ("nis", "apr"),
+    5: ("may",), 6: ("haz", "iyun", "jun"), 7: ("tem", "iyul", "jul"),
+    8: ("agu", "avq", "aug"), 9: ("eyl", "sen", "sep"), 10: ("eki", "okt", "oct"),
+    11: ("kas", "noy", "nov"), 12: ("ara", "dek", "dec")}
+MONTH_LABELS = {
+    "en": ["January", "February", "March", "April", "May", "June", "July", "August",
+           "September", "October", "November", "December"],
+    "az": ["Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun", "İyul", "Avqust", "Sentyabr",
+           "Oktyabr", "Noyabr", "Dekabr"]}
+DOT_DECIMAL_LANGS = {"en", "ja", "zh", "ko", "th", "he", "iw", "hi", "ms", "fil", "tl", "ga"}
+_fin = {"at": 0.0, "layout": None}
+
+
+def fin_key() -> str:
+    return os.getenv("FINANCE_SHEET_ID", "").strip()
+
+
+def finance_on() -> bool:
+    return GSA_PATH.exists() and bool(fin_key())
+
+
+async def fsheet(method, path="", **kw):
+    return await gsheet(method, path, book=fin_key(), **kw)
+
+
+def col_letter(index: int) -> str:
+    s, n = "", index + 1
+    while n:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def month_label(ym) -> str:
+    return f"{MONTH_LABELS[LANG][ym[1] - 1]} {ym[0]}"
+
+
+def month_of(value):
+    """(year, month) from a month header: a date, 'Kas 2026', 'Noyabr 2026', '11.2026'..."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value > 20000:  # a real date (days since 1899)
+            d = EPOCH + timedelta(days=int(value))
+            return d.year, d.month
+        return None
+    text = fold(str(value or "")).translate(PLAIN)
+    year = re.search(r"(20\d\d)", text)
+    if not year:
+        return None
+    numeric = re.search(r"\b(\d{1,2})[./-]20\d\d", text) or re.search(r"20\d\d[./-](\d{1,2})\b", text)
+    if numeric and 1 <= int(numeric.group(1)) <= 12:
+        return int(year.group(1)), int(numeric.group(1))
+    word = re.search(r"[a-z]+", text)
+    if word:
+        for month, prefixes in MONTH_PREFIXES.items():
+            if word.group().startswith(prefixes):
+                return int(year.group(1)), month
+    return None
+
+
+def formula_terms(value):
+    """Numbers in a cell like =250+10,5-5 or 250. Returns None for anything else
+    (formulas that use other cells, functions or text must never be changed)."""
+    if value in (None, ""):
+        return []
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return [float(value)] if value else []
+    text = str(value).strip()
+    if not text.startswith("="):
+        if re.fullmatch(r"-?\d+(?:[.,]\d+)?", text):
+            return [float(text.replace(",", "."))]
+        return None
+    body = text[1:].replace(" ", "")
+    if not body or not re.fullmatch(r"[\d+\-.,]+", body):
+        return None
+    return [(-1 if sign == "-" else 1) * float(number.replace(",", "."))
+            for sign, number in re.findall(r"([+-]?)(\d+(?:[.,]\d+)?)", body)]
+
+
+def amount_text(x, decimal=".") -> str:
+    return f"{float(x):.2f}".rstrip("0").rstrip(".").replace(".", decimal)
+
+
+def build_formula(terms, decimal) -> str:
+    out = "=" + amount_text(terms[0], decimal)
+    for t in terms[1:]:
+        out += ("-" if t < 0 else "+") + amount_text(abs(t), decimal)
+    return out
+
+
+def fin_error(e) -> str:
+    text = str(e)
+    if "not supported for this document" in text:
+        return T["fin_xlsx"]
+    if "403" in text or "PERMISSION_DENIED" in text:
+        return T["fin_noaccess"]
+    return text[:200]
+
+
+async def fin_layout(force=False):
+    """Find the finance tab, the header row, the item column and every month's columns."""
+    if not force and _fin["layout"] and time.time() - _fin["at"] < 120:
+        return _fin["layout"]
+    meta = await fsheet("GET", params={"fields": "properties.title,properties.locale,sheets.properties"})
+    tabs_ = [s["properties"] for s in meta.get("sheets", [])]
+    wanted = os.getenv("FINANCE_TAB", "").strip()
+    tab = (next((p for p in tabs_ if wanted and fold(p["title"]) == fold(wanted)), None)
+           or next((p for p in tabs_ if "financ" in fold(p["title"])), None)
+           or (tabs_[0] if len(tabs_) == 1 else None))
+    if not tab:
+        raise ValueError("finance tab not found: send /setkey FINANCE_TAB with the tab's name")
+    head = await fsheet("GET", f"/values/{a1(tab['title'], 'A1:ZZ20')}", params={
+        "valueRenderOption": "UNFORMATTED_VALUE", "dateTimeRenderOption": "SERIAL_NUMBER"})
+    rows = head.get("values", [])
+    header_row = next((r for r, row in enumerate(rows)
+                       if any(fold(str(v)) == "actual" for v in row)), None)
+    if header_row is None:
+        raise ValueError("no 'Actual' column header found in the first 20 rows")
+    item_col = 2  # column C unless a "CF items" header says otherwise
+    for row in rows[:header_row + 1]:
+        for c, v in enumerate(row):
+            if "cf item" in fold(str(v)):
+                item_col = c
+    hrow = rows[header_row]
+    above = rows[header_row - 1] if header_row else []
+    months = {}
+    for c, v in enumerate(hrow):
+        if fold(str(v)) != "actual":
+            continue
+        ym = None
+        for cc in (c, c - 1, c - 2):  # the month name may sit over Forecast (merged cells)
+            if 0 <= cc < len(above) and above[cc] not in ("", None):
+                ym = month_of(above[cc])
+                if ym:
+                    break
+        if ym:
+            forecast = next((cc for cc in (c - 1, c - 2, c - 3)
+                             if cc >= 0 and fold(str(hrow[cc])) == "forecast"), None)
+            months[ym] = {"actual": c, "forecast": forecast}
+    locale = (meta["properties"].get("locale") or "en_US").split("_")[0]
+    _fin["layout"] = {
+        "file": meta["properties"]["title"], "tab": tab["title"], "tab_id": tab["sheetId"],
+        "header_row": header_row, "item_col": item_col, "months": months,
+        "decimal": "." if locale in DOT_DECIMAL_LANGS else ","}
+    _fin["at"] = time.time()
+    return _fin["layout"]
+
+
+def _column(value_range, length):
+    out = [(row[0] if row else "") for row in value_range.get("values", [])]
+    return out + [""] * (length - len(out))
+
+
+async def fin_month(ym=None):
+    """All CF rows of a month with Actual and Forecast values."""
+    L = await fin_layout()
+    ym = ym or (today_date().year, today_date().month)
+    if ym not in L["months"]:
+        raise ValueError(f"no Forecast/Actual columns for {month_label(ym)} in the sheet yet")
+    cols = L["months"][ym]
+    first = L["header_row"] + 2  # 1-based number of the first row under the header
+    last = first + 250
+    tab = qt(L["tab"])
+
+    def rng(col):
+        letter = col_letter(col)
+        return f"{tab}!{letter}{first}:{letter}{last}"
+
+    ranges = [rng(L["item_col"]), rng(cols["actual"])]
+    if cols["forecast"] is not None:
+        ranges.append(rng(cols["forecast"]))
+    values = (await fsheet("GET", "/values:batchGet", params={
+        "ranges": ranges, "valueRenderOption": "UNFORMATTED_VALUE"}))["valueRanges"]
+    formulas = (await fsheet("GET", "/values:batchGet", params={
+        "ranges": [ranges[1]], "valueRenderOption": "FORMULA"}))["valueRanges"][0]
+    n = last - first + 1
+    labels, actuals = _column(values[0], n), _column(values[1], n)
+    forecasts = _column(values[2], n) if len(values) > 2 else [""] * n
+    formula_list = _column(formulas, n)
+    section, out = "", []
+    for i, label in enumerate(labels):
+        text = str(label).strip()
+        if not text:
+            continue
+        actual = to_number(actuals[i]) if actuals[i] not in ("", None) else 0
+        forecast = to_number(forecasts[i]) if forecasts[i] not in ("", None) else None
+        entry = {"item": text, "row": first + i, "section": section, "actual": actual or 0,
+                 "forecast": forecast}
+        if text.endswith(":"):
+            section = text.rstrip(":").strip()
+            entry.update(kind="total", section=section)
+        else:
+            entry.update(kind="item", writable=formula_terms(formula_list[i]) is not None)
+        out.append(entry)
+    return {"month": ym, "label": month_label(ym), "layout": L, "cols": cols, "rows": out}
+
+
+async def fin_note(L, row, col):
+    data = await fsheet("GET", params={
+        "ranges": f"{qt(L['tab'])}!{col_letter(col)}{row}",
+        "fields": "sheets(data(rowData(values(note))))"})
+    try:
+        return data["sheets"][0]["data"][0]["rowData"][0]["values"][0].get("note", "")
+    except (KeyError, IndexError):
+        return ""
+
+
+async def fin_set_note(L, row, col, note):
+    await fsheet("POST", ":batchUpdate", json={"requests": [{"updateCells": {
+        "range": grid(L["tab_id"], row - 1, row, col, col + 1),
+        "rows": [{"values": [{"note": note}]}], "fields": "note"}}]})
+
+
+async def fin_cell(L, cell, render):
+    data = await fsheet("GET", f"/values/{a1(L['tab'], cell)}", params={"valueRenderOption": render})
+    values = data.get("values") or [[""]]
+    return values[0][0] if values[0] else ""
+
+
+async def fin_restore(L, cell, original):
+    if original in (None, ""):
+        await fsheet("POST", f"/values/{a1(L['tab'], cell)}:clear", json={})
+    elif isinstance(original, (int, float)):
+        await fsheet("PUT", f"/values/{a1(L['tab'], cell)}", params={"valueInputOption": "RAW"},
+                     json={"values": [[original]]})
+    else:
+        await fsheet("PUT", f"/values/{a1(L['tab'], cell)}",
+                     params={"valueInputOption": "USER_ENTERED"}, json={"values": [[original]]})
+
+
+def fin_find(rows, item):
+    """Exact item name only (ignoring case, spaces and punctuation). Never a near match:
+    with money, writing to the wrong line is worse than asking."""
+    def key(text):
+        return re.sub(r"[^0-9a-z]", "", fold(str(text)).translate(PLAIN))
+
+    wanted = key(item)
+    for r in rows:
+        if key(r["item"]) == wanted:
+            if r["kind"] == "total":
+                return None, f"'{r['item']}' is a total row calculated by the sheet; choose an item."
+            return r, None
+    names = [r["item"] for r in rows if r["kind"] == "item"]
+    return None, f"No CF item named '{item}'. Use one of these exact names: {names}"
+
+
+async def finance_items(uid, month=None):
+    ym = None
+    if month:
+        y, m = month.split("-")[:2]
+        ym = (int(y), int(m))
+    data = await fin_month(ym)
+    rows = []
+    for r in data["rows"]:
+        entry = {"item": r["item"], "kind": r["kind"], "section": r["section"],
+                 "actual": r["actual"], "forecast": r["forecast"]}
+        if r["forecast"] is not None:
+            entry["difference"] = round(r["forecast"] - r["actual"], 2)
+        if r["kind"] == "item" and not r["writable"]:
+            entry["note"] = "calculated by a formula, the bot cannot add to it"
+        rows.append(entry)
+    rules = {k: v for k, v in db.execute(
+        "SELECT keyword, item FROM finance_rules WHERE user_id=?", (uid,)).fetchall()}
+    return {"month": data["label"], "currency": "AZN", "rows": rows, "remembered_rules": rules,
+            "columns": {"actual": col_letter(data["cols"]["actual"])}}
+
+
+async def finance_add(uid, item, amount, description, date=None):
+    day = parse_day(date)
+    amount = float(amount)
+    data = await fin_month((day.year, day.month))
+    L = data["layout"]
+    entry, problem = fin_find(data["rows"], item)
+    if problem:
+        return {"error": problem}
+    if not entry["writable"]:
+        return {"error": f"'{entry['item']}' is calculated by a formula in the sheet; not changed."}
+    col = data["cols"]["actual"]
+    cell = f"{col_letter(col)}{entry['row']}"
+    original = await fin_cell(L, cell, "FORMULA")
+    terms = formula_terms(original)
+    if terms is None:
+        return {"error": f"'{entry['item']}' cell has content the bot must not change."}
+    old_total = round(sum(terms), 2)
+    expected = round(old_total + amount, 2)
+    new_terms = terms + [amount]
+    written = None
+    other = "," if L["decimal"] == "." else "."
+    for decimal in (L["decimal"], other):
+        formula = build_formula(new_terms, decimal)
+        await fsheet("PUT", f"/values/{a1(L['tab'], cell)}",
+                     params={"valueInputOption": "USER_ENTERED"}, json={"values": [[formula]]})
+        check = await fin_cell(L, cell, "UNFORMATTED_VALUE")  # read back and verify
+        if isinstance(check, (int, float)) and abs(check - expected) < 0.005:
+            written, L["decimal"] = formula, decimal
+            break
+        if all(float(t).is_integer() for t in new_terms):
+            break  # no decimals, so the separator isn't the problem
+    if not written:
+        await fin_restore(L, cell, original)
+        return {"error": "The sheet did not accept the amount, so the cell was restored unchanged."}
+    old_note, note_saved = "", True
+    try:
+        old_note = await fin_note(L, entry["row"], col)
+        line = f"{day.strftime('%d.%m.%Y')} · {description} · {amount_text(amount)} AZN"
+        await fin_set_note(L, entry["row"], col, f"{old_note}\n{line}" if old_note else line)
+    except Exception:
+        log.exception("Could not write the note")
+        note_saved = False
+    db.execute(
+        "INSERT INTO finance_log (user_id, date, item, amount, description, tab, cell, row, col, "
+        "old_value, new_total, old_note, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (uid, day.isoformat(), entry["item"], amount, description, L["tab"], cell, entry["row"],
+         col, json.dumps(original, ensure_ascii=False), expected, old_note, now()))
+    db.commit()
+    result = {"item": entry["item"], "section": entry["section"], "month": data["label"],
+              "cell": cell, "old_actual": old_total, "new_actual": expected,
+              "forecast": entry["forecast"], "note_saved": note_saved}
+    if entry["forecast"] is not None:
+        result["difference_to_forecast"] = round(entry["forecast"] - expected, 2)
+    return result
+
+
+async def finance_undo(uid):
+    row = db.execute("SELECT * FROM finance_log WHERE user_id=? AND undone=0 ORDER BY id DESC "
+                     "LIMIT 1", (uid,)).fetchone()
+    if not row:
+        return {"error": "Nothing to undo."}
+    L = await fin_layout()
+    current = await fin_cell(L, row["cell"], "UNFORMATTED_VALUE")
+    if not isinstance(current, (int, float)) or abs(current - row["new_total"]) > 0.005:
+        return {"error": f"Cell {row['cell']} has changed since then, so it was not undone."}
+    await fin_restore(L, row["cell"], json.loads(row["old_value"]))
+    try:
+        await fin_set_note(L, row["row"], row["col"], row["old_note"] or "")
+    except Exception:
+        log.exception("Could not restore the note")
+    db.execute("UPDATE finance_log SET undone=1 WHERE id=?", (row["id"],))
+    db.commit()
+    return {"undone": True, "item": row["item"], "amount": row["amount"],
+            "description": row["description"], "date": row["date"]}
+
+
+def finance_remember(uid, keyword, item):
+    db.execute("INSERT INTO finance_rules (user_id, keyword, item) VALUES (?,?,?) "
+               "ON CONFLICT(user_id, keyword) DO UPDATE SET item=excluded.item",
+               (uid, keyword.strip().lower(), item))
+    db.commit()
+    return {"remembered": f"{keyword} → {item}"}
+
+
+def finance_forget(uid, keyword):
+    cur = db.execute("DELETE FROM finance_rules WHERE user_id=? AND keyword=?",
+                     (uid, keyword.strip().lower()))
+    db.commit()
+    return {"forgotten": cur.rowcount > 0}
+
+
 FUNCS = {f.__name__: f for f in [
     add_note, search_notes, delete_note, add_task, list_tasks, update_task,
     complete_task, delete_task, set_reminder, list_reminders, cancel_reminder,
     todoist_list_tasks, todoist_add_task, todoist_update_task, todoist_complete_task,
     todoist_delete_task, todoist_list_projects,
     save_program, get_program, log_workout, delete_workout, workout_history,
+    finance_items, finance_add, finance_undo, finance_remember, finance_forget,
 ]}
 
 TIME_DESC = "Local time as 'YYYY-MM-DD HH:MM'"
@@ -1554,14 +1952,44 @@ WORKOUT_TOOLS = [
          "days": {"type": "integer", "description": "How far back, default 30"},
          "exercise": {"type": "string"}}}},
 ]
+FINANCE_TOOLS = [
+    {"name": "finance_items",
+     "description": "Read the user's cash-flow sheet for a month: the exact CF item names with "
+                    "their section, Actual and Forecast, the totals, and remembered "
+                    "keyword → item rules. Call this before finance_add.",
+     "input_schema": {"type": "object", "properties": {
+         "month": {"type": "string", "description": "'YYYY-MM'; omit for the current month"}}}},
+    {"name": "finance_add",
+     "description": "Add an income or expense (AZN) to a CF item's Actual cell for the month of "
+                    "the date: appends +amount to the cell's formula and a note line "
+                    "'date · description · amount'. Negative amount = refund or correction.",
+     "input_schema": {"type": "object", "properties": {
+         "item": {"type": "string", "description": "Exact CF item name from finance_items"},
+         "amount": {"type": "number", "description": "In AZN"},
+         "description": {"type": "string", "description": "Short: what or where, in the user's language"},
+         "date": {"type": "string", "description": "'YYYY-MM-DD'; omit for today"}},
+         "required": ["item", "amount", "description"]}},
+    {"name": "finance_undo",
+     "description": "Undo the last amount added with finance_add (restores the cell and its note).",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "finance_remember",
+     "description": "Remember that a keyword (shop, merchant, kind of expense) belongs to a CF item.",
+     "input_schema": {"type": "object", "properties": {
+         "keyword": {"type": "string"}, "item": {"type": "string"}},
+         "required": ["keyword", "item"]}},
+    {"name": "finance_forget", "description": "Forget a remembered keyword rule.",
+     "input_schema": {"type": "object", "properties": {"keyword": {"type": "string"}},
+                      "required": ["keyword"]}},
+]
 LOCAL_TASK_TOOLS = {"add_task", "list_tasks", "update_task", "complete_task", "delete_task"}
 
 
 def active_tools():
     """With Todoist connected, tasks live there instead of the bot's own list."""
+    extra = WORKOUT_TOOLS + (FINANCE_TOOLS if finance_on() else [])
     if todoist_on():
-        return [t for t in TOOLS if t["name"] not in LOCAL_TASK_TOOLS] + TODOIST_TOOLS + WORKOUT_TOOLS
-    return TOOLS + WORKOUT_TOOLS
+        return [t for t in TOOLS if t["name"] not in LOCAL_TASK_TOOLS] + TODOIST_TOOLS + extra
+    return TOOLS + extra
 
 
 async def run_tool(uid, name, args):
@@ -1614,6 +2042,20 @@ def system_prompt() -> str:
            "rows to the Log tab that feed the Dashboard charts. Share the link when the user "
            "asks about their progress dashboard." if sheets_on()
            else "Google Sheet is not connected yet.")
+        + (
+            "\nPersonal finance: the user tracks money in their own cash-flow sheet (all AZN). "
+            "When they report income or an expense: call finance_items (once per conversation "
+            "is enough) to get the exact CF item names and remembered rules. If a remembered "
+            "rule or the meaning matches exactly one item without doubt, call finance_add. "
+            "Otherwise ASK which item (suggest the 2-3 most likely, using their exact names) and "
+            "write nothing until they answer; then save their choice with finance_remember "
+            "using a short keyword (e.g. the shop) and tell them you remembered it. Never guess. "
+            "If a currency other than AZN is mentioned, ask for the AZN amount. Several amounts "
+            "in one message = one finance_add each. After writing, reply briefly: item, "
+            "old → new Actual, Forecast and how much is left (or over). Use finance_undo if they "
+            "say it was wrong. Answer questions about their spending with finance_items."
+            if finance_on() else ""
+        )
     )
 
 
@@ -1927,6 +2369,30 @@ async def sheet_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text.format(url=sheet_url()))
 
 
+async def finance_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """This month's cash flow: Actual / Forecast for every CF item."""
+    if not allowed(update):
+        return
+    if not finance_on():
+        return await update.message.reply_text(T["fin_off"])
+    try:
+        data = await fin_month()
+    except Exception as e:
+        log.exception("Finance summary failed")
+        return await update.message.reply_text(T["fin_bad"].format(err=fin_error(e)))
+
+    def money(x):
+        return "—" if x is None else amount_text(x)
+
+    lines = [T["fin_title"].format(month=data["label"])]
+    for r in data["rows"]:
+        if r["kind"] == "total":
+            lines.append(f"\n{r['item']} {money(r['actual'])} / {money(r['forecast'])}")
+        else:
+            lines.append(f"• {r['item']}: {money(r['actual'])} / {money(r['forecast'])}")
+    await send_long(update, "\n".join(lines))
+
+
 async def json_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Owner sends the Google service account key file (.json)."""
     if not allowed(update) or not ALLOWED:
@@ -1954,7 +2420,7 @@ async def json_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 SETTABLE = {
     "TODOIST_API_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_MODEL",
     "BOT_LANGUAGE", "VOICE_LANGUAGE", "TRANSCRIBE_MODEL", "TIMEZONE", "DAILY_BRIEF_TIME",
-    "GOOGLE_SHEET_ID", "WORKOUT_CHECKIN_TIME",
+    "GOOGLE_SHEET_ID", "WORKOUT_CHECKIN_TIME", "FINANCE_SHEET_ID", "FINANCE_TAB",
 }
 
 
@@ -1966,7 +2432,7 @@ def check_setting(key, value):
         if value.lower() == "off":
             return ""
         datetime.strptime(value, "%H:%M")
-    elif key == "GOOGLE_SHEET_ID":  # accept the whole link too
+    elif key in ("GOOGLE_SHEET_ID", "FINANCE_SHEET_ID"):  # accept the whole link too
         found = re.search(r"/d/([A-Za-z0-9_-]+)", value)
         value = found.group(1) if found else value
         if not re.fullmatch(r"[A-Za-z0-9_-]{20,}", value):
@@ -1999,11 +2465,11 @@ async def setkey_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ALLOWED:
         return await ctx.bot.send_message(chat_id, T["setkey_locked"])
     key = ctx.args[0].upper() if ctx.args else ""
-    if len(ctx.args) != 2 or key not in SETTABLE:
+    if len(ctx.args) < 2 or key not in SETTABLE:
         return await ctx.bot.send_message(
             chat_id, T["setkey_usage"].format(keys=", ".join(sorted(SETTABLE))))
     try:
-        value = check_setting(key, ctx.args[1].strip())
+        value = check_setting(key, " ".join(ctx.args[1:]).strip())  # tab names may have spaces
     except Exception:
         return await ctx.bot.send_message(chat_id, T["setkey_invalid"].format(key=key))
 
@@ -2021,6 +2487,20 @@ async def setkey_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             log.exception("Todoist token check failed")
             await ctx.bot.send_message(chat_id, T["todoist_bad"])
+
+    if key in ("FINANCE_SHEET_ID", "FINANCE_TAB") and fin_key():
+        if not GSA_PATH.exists():
+            return await ctx.bot.send_message(chat_id, T["sheet_nokey"])
+        try:
+            L = await fin_layout(force=True)
+            data = await fin_month()
+            await ctx.bot.send_message(chat_id, T["fin_ok"].format(
+                title=L["file"], tab=L["tab"], month=data["label"],
+                col=col_letter(data["cols"]["actual"]),
+                n=sum(1 for r in data["rows"] if r["kind"] == "item")))
+        except Exception as e:
+            log.exception("Finance sheet check failed")
+            await ctx.bot.send_message(chat_id, T["fin_bad"].format(err=fin_error(e)))
 
     if key == "GOOGLE_SHEET_ID":
         if not GSA_PATH.exists():
@@ -2077,6 +2557,7 @@ def main():
     app.add_handler(CommandHandler("setkey", setkey_cmd))
     app.add_handler(CommandHandler(["workout", "mesq"], workout_cmd))
     app.add_handler(CommandHandler(["sheet", "cedvel"], sheet_cmd))
+    app.add_handler(CommandHandler(["finance", "maliyye"], finance_cmd))
     app.add_handler(CallbackQueryHandler(workout_button, pattern=r"^wk:"))
     app.add_handler(MessageHandler(filters.Document.FileExtension("json"), json_file))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, voice_msg))
@@ -2089,8 +2570,9 @@ def main():
         log.warning("ALLOWED_USER_IDS is empty: anyone who finds this bot can use it.")
     if not stt:
         log.warning("OPENAI_API_KEY not set: voice messages are turned off.")
-    log.info("Assistant running (language: %s, model: %s, Todoist: %s, Sheet: %s).",
-             LANG, MODEL, "on" if todoist_on() else "off", "on" if sheets_on() else "off")
+    log.info("Assistant running (language: %s, model: %s, Todoist: %s, Sheet: %s, Finance: %s).",
+             LANG, MODEL, "on" if todoist_on() else "off", "on" if sheets_on() else "off",
+             "on" if finance_on() else "off")
     app.run_polling()
 
 
