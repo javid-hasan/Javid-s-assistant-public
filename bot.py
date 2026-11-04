@@ -23,6 +23,7 @@ cedvel - Məşq cədvəli (Google Sheet)
 maliyye - Bu ayın maliyyəsi
 telefon - Telefonu qoş
 yoxla - Botu yoxla
+xerc - Token xərci
 setkey - Ayar və ya açar dəyiş
 
 English:
@@ -41,6 +42,7 @@ sheet - Workout Google Sheet
 finance - This month's finances
 phone - Connect your phone
 status - Check the bot
+usage - Token use
 setkey - Change a setting or key
 """
 
@@ -103,6 +105,7 @@ TEXTS = {
             "/finance - this month's cash flow\n"
             "/phone - connect your Android phone (alarms, calls, messages)\n"
             "/status - check every part of the bot\n"
+            "/usage - how many Claude tokens the bot used\n"
             "/sheet - link to your workout Google Sheet (/sheet rebuild to rebuild the dashboard)\n"
             "/reset - clear conversation memory\n"
             "/setkey NAME value - change a setting or key (your message is deleted)"
@@ -230,6 +233,16 @@ TEXTS = {
         "diag_network": "the server can't reach it → internet or service problem",
         "diag_footer": "If the bot doesn't answer at all, open the Droplet Console and type:\n"
                        "bash /opt/assistant-bot/diagnose.sh",
+        "usage_title": "📊 Claude token use",
+        "usage_today": "Today",
+        "usage_week": "Last 7 days",
+        "usage_month": "This month",
+        "usage_line": "{label}: {calls} requests · {inp} input · {out} output tokens",
+        "usage_cache": "   ↳ {pct}% of the input came from the cache (about 10× cheaper)",
+        "usage_model": "Model now: {model}",
+        "usage_money": "💵 Exact cost per day: console.anthropic.com → Usage / Cost",
+        "model_ok": "✅ {model} works. The bot uses it from your next message.",
+        "model_bad": "⚠️ {model} didn't work: {err}\nI switched back to {old}.",
         "sheet_rebuilt": "🔄 Dashboard rebuilt. I set the sheet's region to United States so the "
                          "formulas work (decimals now use a dot: 62.5). Your Log and Program "
                          "data were not touched:\n{url}",
@@ -257,6 +270,7 @@ TEXTS = {
             "/maliyye - bu ayın maliyyə xülasəsi\n"
             "/telefon - Android telefonu qoş (zəngli saat, zəng, mesaj)\n"
             "/yoxla - botun bütün hissələrini yoxla\n"
+            "/xerc - Claude token xərci\n"
             "/cedvel - Google Sheet məşq cədvəlinin linki (/cedvel yenilə - paneli yenidən qur)\n"
             "/sifirla - söhbət yaddaşını təmizlə\n"
             "/setkey AD dəyər - ayar və ya açar dəyiş (mesajınız silinir)"
@@ -394,6 +408,16 @@ TEXTS = {
         "diag_network": "server ona qoşula bilmir → internet və ya xidmət problemi",
         "diag_footer": "Bot heç cavab vermirsə, Droplet Console-da yazın:\n"
                        "bash /opt/assistant-bot/diagnose.sh",
+        "usage_title": "📊 Claude token istifadəsi",
+        "usage_today": "Bu gün",
+        "usage_week": "Son 7 gün",
+        "usage_month": "Bu ay",
+        "usage_line": "{label}: {calls} sorğu · {inp} giriş · {out} çıxış tokeni",
+        "usage_cache": "   ↳ girişin {pct}%-i keşdən oxundu (təxminən 10 dəfə ucuz)",
+        "usage_model": "Hazırkı model: {model}",
+        "usage_money": "💵 Günlük dəqiq məbləğ: console.anthropic.com → Usage / Cost",
+        "model_ok": "✅ {model} işləyir. Bot növbəti mesajınızdan onu istifadə edəcək.",
+        "model_bad": "⚠️ {model} işləmədi: {err}\nƏvvəlki modelə ({old}) qaytardım.",
         "sheet_rebuilt": "🔄 Panel yenidən quruldu. Formulların işləməsi üçün cədvəlin regionunu "
                          "United States etdim (onluq kəsrlər indi nöqtə ilə yazılır: 62.5). "
                          "Gündəlik və Proqram məlumatlarınıza toxunulmadı:\n{url}",
@@ -461,6 +485,9 @@ db.executescript(
         id INTEGER PRIMARY KEY, user_id INTEGER, date TEXT, item TEXT, amount REAL,
         description TEXT, tab TEXT, cell TEXT, row INTEGER, col INTEGER, old_value TEXT,
         new_total REAL, old_note TEXT, undone INTEGER DEFAULT 0, created_at TEXT);
+    CREATE TABLE IF NOT EXISTS usage (
+        day TEXT, model TEXT, calls INTEGER, input INTEGER, output INTEGER,
+        cache_write INTEGER, cache_read INTEGER, PRIMARY KEY (day, model));
     CREATE TABLE IF NOT EXISTS contacts (
         user_id INTEGER, name TEXT, phone TEXT, telegram TEXT, PRIMARY KEY (user_id, name));
     CREATE TABLE IF NOT EXISTS phone_queue (
@@ -2565,7 +2592,6 @@ def system_prompt() -> str:
     return (
         "You are a concise personal assistant living in the user's Telegram. You manage "
         "their notes, tasks, reminders and daily plans using the tools provided.\n"
-        f"Current local time: {datetime.now(TZ).strftime('%A %Y-%m-%d %H:%M')} ({TZ.key}).\n"
         f"Language: {T['lang_rule']}\n"
         "Rules:\n"
         "- Convert relative times ('tomorrow 9am', 'next Friday') to 'YYYY-MM-DD HH:MM' "
@@ -2631,13 +2657,45 @@ def system_prompt() -> str:
     )
 
 
+CACHE = {"type": "ephemeral"}  # Anthropic prompt caching: repeated text costs ~10%
+
+
+def system_blocks():
+    """Instructions as two parts: the long fixed part is cached; the clock is not."""
+    return [{"type": "text", "text": system_prompt(), "cache_control": CACHE},
+            {"type": "text", "text": f"Current local time: "
+                                     f"{datetime.now(TZ).strftime('%A %Y-%m-%d %H:%M')} ({TZ.key})."}]
+
+
+def cached_tools():
+    tools = active_tools()
+    return tools[:-1] + [{**tools[-1], "cache_control": CACHE}] if tools else tools
+
+
+def record_usage(resp):
+    u = getattr(resp, "usage", None)
+    if not u:
+        return
+    values = (u.input_tokens or 0, u.output_tokens or 0,
+              getattr(u, "cache_creation_input_tokens", 0) or 0,
+              getattr(u, "cache_read_input_tokens", 0) or 0)
+    db.execute(
+        "INSERT INTO usage (day, model, calls, input, output, cache_write, cache_read) "
+        "VALUES (?,?,1,?,?,?,?) ON CONFLICT(day, model) DO UPDATE SET calls=calls+1, "
+        "input=input+excluded.input, output=output+excluded.output, "
+        "cache_write=cache_write+excluded.cache_write, cache_read=cache_read+excluded.cache_read",
+        (today_date().isoformat(), MODEL, *values))
+    db.commit()
+
+
 async def ask_claude(uid: int, text: str) -> str:
     msgs = list(history[uid]) + [{"role": "user", "content": text}]
     for _ in range(8):  # cap tool-use rounds
         resp = await client.messages.create(
-            model=MODEL, max_tokens=1024, system=system_prompt(),
-            tools=active_tools(), messages=msgs,
+            model=MODEL, max_tokens=1024, system=system_blocks(),
+            tools=cached_tools(), messages=msgs,
         )
+        record_usage(resp)
         if resp.stop_reason != "tool_use":
             break
         msgs.append({"role": "assistant", "content": resp.content})
@@ -2647,6 +2705,12 @@ async def ask_claude(uid: int, text: str) -> str:
                 out = await run_tool(uid, b.name, b.input)
                 results.append({"type": "tool_result", "tool_use_id": b.id,
                                 "content": json.dumps(out, default=str, ensure_ascii=False)})
+        for m in msgs:  # keep only the newest message cache point (the API allows a few)
+            if isinstance(m.get("content"), list):
+                for block in m["content"]:
+                    if isinstance(block, dict):
+                        block.pop("cache_control", None)
+        results[-1]["cache_control"] = CACHE  # the next round re-reads all of this cheaply
         msgs.append({"role": "user", "content": results})
     reply = "".join(b.text for b in resp.content if b.type == "text").strip() or "✅"
     history[uid].append({"role": "user", "content": text})
@@ -3101,12 +3165,23 @@ async def setkey_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception:
         return await ctx.bot.send_message(chat_id, T["setkey_invalid"].format(key=key))
 
+    previous_model = MODEL
     save_setting(key, value)
     load_config()
     schedule_jobs(ctx.job_queue)
     secret = key.endswith(("_KEY", "_TOKEN"))
     masked = f" (…{value[-4:]})" if secret and len(value) > 8 else (f": {value}" if not secret else "")
     await ctx.bot.send_message(chat_id, T["setkey_saved"].format(key=key, masked=masked))
+
+    if key == "CLAUDE_MODEL":  # try the new model; go back if it doesn't work
+        try:
+            await asyncio.wait_for(diag_ai(), timeout=30)
+            await ctx.bot.send_message(chat_id, T["model_ok"].format(model=value))
+        except Exception as e:
+            save_setting(key, previous_model)
+            load_config()
+            await ctx.bot.send_message(chat_id, T["model_bad"].format(
+                model=value, err=diag_hint(e), old=previous_model))
 
     if key == "TODOIST_API_TOKEN":
         try:
@@ -3298,6 +3373,40 @@ def diag_server():
     return T["diag_server_val"].format(disk=f"{disk:.1f}", mem=mem)
 
 
+def usage_totals(since):
+    row = db.execute("SELECT SUM(calls), SUM(input), SUM(output), SUM(cache_write), "
+                     "SUM(cache_read) FROM usage WHERE day>=?", (since,)).fetchone()
+    return [x or 0 for x in row]
+
+
+async def usage_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/xerc (/usage): Claude tokens used today, this week and this month."""
+    if not allowed(update):
+        return
+    today = today_date()
+
+    def fmt(n):
+        return f"{n:,}".replace(",", " ")
+
+    lines = [T["usage_title"], ""]
+    for label, since in ((T["usage_today"], today),
+                         (T["usage_week"], today - timedelta(days=6)),
+                         (T["usage_month"], today.replace(day=1))):
+        calls, inp, out, cw, cr = usage_totals(since.isoformat())
+        total_in = inp + cw + cr
+        lines.append(T["usage_line"].format(label=label, calls=calls, inp=fmt(total_in),
+                                            out=fmt(out)))
+        if label == T["usage_month"] and total_in:
+            lines.append(T["usage_cache"].format(pct=round(100 * cr / total_in)))
+    models = db.execute("SELECT model, SUM(calls) FROM usage WHERE day>=? GROUP BY model",
+                        (today.replace(day=1).isoformat(),)).fetchall()
+    lines += ["", T["usage_model"].format(model=MODEL)]
+    if len(models) > 1:
+        lines.append(", ".join(f"{m}: {c}" for m, c in models))
+    lines += ["", T["usage_money"]]
+    await send_long(update, "\n".join(lines))
+
+
 async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/yoxla (/status): check every part of the bot and explain what's wrong."""
     if not allowed(update):
@@ -3367,6 +3476,7 @@ def main():
     app.add_handler(CommandHandler(["finance", "maliyye"], finance_cmd))
     app.add_handler(CommandHandler(["phone", "telefon"], phone_cmd))
     app.add_handler(CommandHandler(["status", "yoxla"], status_cmd))
+    app.add_handler(CommandHandler(["usage", "xerc"], usage_cmd))
     app.add_error_handler(on_error)
     app.add_handler(CallbackQueryHandler(workout_button, pattern=r"^wk:"))
     app.add_handler(MessageHandler(filters.Document.FileExtension("json"), json_file))
