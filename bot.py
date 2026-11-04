@@ -21,6 +21,8 @@ komek - Kömək
 mesq - Bugünkü məşq
 cedvel - Məşq cədvəli (Google Sheet)
 maliyye - Bu ayın maliyyəsi
+telefon - Telefonu qoş
+yoxla - Botu yoxla
 setkey - Ayar və ya açar dəyiş
 
 English:
@@ -37,12 +39,16 @@ help - Show help
 workout - Today's workout
 sheet - Workout Google Sheet
 finance - This month's finances
+phone - Connect your phone
+status - Check the bot
 setkey - Change a setting or key
 """
 
 import asyncio
 import inspect
 import json
+import shutil
+import secrets
 import logging
 import os
 import re
@@ -95,6 +101,8 @@ TEXTS = {
             "/agenda - tasks and reminders at a glance\n"
             "/workout - today's workout with log buttons\n"
             "/finance - this month's cash flow\n"
+            "/phone - connect your Android phone (alarms, calls, messages)\n"
+            "/status - check every part of the bot\n"
             "/sheet - link to your workout Google Sheet (/sheet rebuild to rebuild the dashboard)\n"
             "/reset - clear conversation memory\n"
             "/setkey NAME value - change a setting or key (your message is deleted)"
@@ -184,6 +192,44 @@ TEXTS = {
         "fin_off": "The finance sheet isn't connected yet. Send /setkey FINANCE_SHEET_ID with "
                    "the sheet's link.",
         "fin_title": "💰 {month} · Actual / Forecast (AZN)",
+        "phone_setup": "📱 Phone connection (ntfy + Tasker)\n\nntfy server: {server}\n"
+                       "The next two messages are your private topic and your secret key. "
+                       "Don't share them with anyone.\n\nAfter setting up the phone, send "
+                       "/phone test. (/phone new creates new keys.)",
+        "phone_off": "The phone isn't connected yet. Send /phone to start.",
+        "phone_test_sent": "📨 Test sent. A short message saying “Bot is connected” should "
+                           "appear on your phone within a few seconds.",
+        "phone_test_toast": "✅ Bot is connected to the phone",
+        "diag_title": "🩺 Bot check",
+        "diag_bot": "Bot",
+        "diag_uptime": "running for {uptime}, time {time} ({tz})",
+        "diag_units": "d h min",
+        "diag_ai": "AI (Claude)",
+        "diag_voice": "Voice (OpenAI)",
+        "diag_todoist": "Todoist",
+        "diag_gkey": "Google key",
+        "diag_workout": "Workout sheet",
+        "diag_finance": "Finance sheet",
+        "diag_phone": "Phone (ntfy)",
+        "diag_phone_ok": "ntfy reachable (send /phone test to check the phone itself)",
+        "diag_reminders": "Reminders",
+        "diag_reminders_val": "{n} waiting{next}",
+        "diag_next": ", next {when}",
+        "diag_server": "Server",
+        "diag_server_val": "{disk} GB disk and {mem} MB memory free",
+        "diag_projects": "projects",
+        "diag_tabs": "missing: {items}",
+        "diag_off": "not set up",
+        "diag_errors": "Recent errors:",
+        "diag_noerrors": "No errors since the last start ✨",
+        "diag_key": "the key/token is wrong or was deleted → send a new one with /setkey",
+        "diag_credit": "no credit left → top up the account",
+        "diag_access": "no access → check sharing and permissions",
+        "diag_notfound": "not found → check the ID, link or model name",
+        "diag_timeout": "no answer in 20 seconds → the service is slow or down, try again later",
+        "diag_network": "the server can't reach it → internet or service problem",
+        "diag_footer": "If the bot doesn't answer at all, open the Droplet Console and type:\n"
+                       "bash /opt/assistant-bot/diagnose.sh",
         "sheet_rebuilt": "🔄 Dashboard rebuilt. I set the sheet's region to United States so the "
                          "formulas work (decimals now use a dot: 62.5). Your Log and Program "
                          "data were not touched:\n{url}",
@@ -209,6 +255,8 @@ TEXTS = {
             "/gundem - tapşırıqlar və xatırlatmalar\n"
             "/mesq - bugünkü məşq və qeyd düymələri\n"
             "/maliyye - bu ayın maliyyə xülasəsi\n"
+            "/telefon - Android telefonu qoş (zəngli saat, zəng, mesaj)\n"
+            "/yoxla - botun bütün hissələrini yoxla\n"
             "/cedvel - Google Sheet məşq cədvəlinin linki (/cedvel yenilə - paneli yenidən qur)\n"
             "/sifirla - söhbət yaddaşını təmizlə\n"
             "/setkey AD dəyər - ayar və ya açar dəyiş (mesajınız silinir)"
@@ -308,6 +356,44 @@ TEXTS = {
         "fin_off": "Maliyyə cədvəli hələ qoşulmayıb. /setkey FINANCE_SHEET_ID və cədvəlin linkini "
                    "göndərin.",
         "fin_title": "💰 {month} · Actual / Forecast (AZN)",
+        "phone_setup": "📱 Telefon əlaqəsi (ntfy + Tasker)\n\nntfy server: {server}\n"
+                       "Növbəti iki mesaj sizin gizli mövzunuz (topic) və gizli açarınızdır. "
+                       "Onları heç kimlə paylaşmayın.\n\nTelefonu quraşdırandan sonra "
+                       "/telefon test göndərin. (/telefon yeni yeni açarlar yaradır.)",
+        "phone_off": "Telefon hələ qoşulmayıb. Başlamaq üçün /telefon göndərin.",
+        "phone_test_sent": "📨 Test göndərildi. Bir neçə saniyəyə telefonunuzda “Bot "
+                           "telefonla əlaqə qurdu” yazısı görünməlidir.",
+        "phone_test_toast": "✅ Bot telefonla əlaqə qurdu",
+        "diag_title": "🩺 Botun yoxlanışı",
+        "diag_bot": "Bot",
+        "diag_uptime": "işləmə müddəti {uptime}, saat {time} ({tz})",
+        "diag_units": "gün saat dəq",
+        "diag_ai": "AI (Claude)",
+        "diag_voice": "Səs (OpenAI)",
+        "diag_todoist": "Todoist",
+        "diag_gkey": "Google açarı",
+        "diag_workout": "Məşq cədvəli",
+        "diag_finance": "Maliyyə cədvəli",
+        "diag_phone": "Telefon (ntfy)",
+        "diag_phone_ok": "ntfy əlçatandır (telefonun özünü yoxlamaq üçün /telefon test göndərin)",
+        "diag_reminders": "Xatırlatmalar",
+        "diag_reminders_val": "{n} gözləyir{next}",
+        "diag_next": ", növbəti {when}",
+        "diag_server": "Server",
+        "diag_server_val": "diskdə {disk} GB, yaddaşda {mem} MB boş yer",
+        "diag_projects": "layihə",
+        "diag_tabs": "çatışmır: {items}",
+        "diag_off": "qurulmayıb",
+        "diag_errors": "Son xətalar:",
+        "diag_noerrors": "Son başlanğıcdan bəri xəta yoxdur ✨",
+        "diag_key": "açar/token səhvdir və ya silinib → /setkey ilə yenisini göndərin",
+        "diag_credit": "kredit bitib → hesabı artırın",
+        "diag_access": "giriş yoxdur → paylaşmanı və icazələri yoxlayın",
+        "diag_notfound": "tapılmadı → ID-ni, linki və ya model adını yoxlayın",
+        "diag_timeout": "20 saniyədə cavab gəlmədi → xidmət yavaşdır və ya işləmir, bir az sonra yoxlayın",
+        "diag_network": "server ona qoşula bilmir → internet və ya xidmət problemi",
+        "diag_footer": "Bot heç cavab vermirsə, Droplet Console-da yazın:\n"
+                       "bash /opt/assistant-bot/diagnose.sh",
         "sheet_rebuilt": "🔄 Panel yenidən quruldu. Formulların işləməsi üçün cədvəlin regionunu "
                          "United States etdim (onluq kəsrlər indi nöqtə ilə yazılır: 62.5). "
                          "Gündəlik və Proqram məlumatlarınıza toxunulmadı:\n{url}",
@@ -375,6 +461,11 @@ db.executescript(
         id INTEGER PRIMARY KEY, user_id INTEGER, date TEXT, item TEXT, amount REAL,
         description TEXT, tab TEXT, cell TEXT, row INTEGER, col INTEGER, old_value TEXT,
         new_total REAL, old_note TEXT, undone INTEGER DEFAULT 0, created_at TEXT);
+    CREATE TABLE IF NOT EXISTS contacts (
+        user_id INTEGER, name TEXT, phone TEXT, telegram TEXT, PRIMARY KEY (user_id, name));
+    CREATE TABLE IF NOT EXISTS phone_queue (
+        id INTEGER PRIMARY KEY, user_id INTEGER, send_at TEXT, payload TEXT,
+        sent INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS finance_rules (
         user_id INTEGER, keyword TEXT, item TEXT, PRIMARY KEY (user_id, keyword));
     """
@@ -2097,6 +2188,151 @@ def finance_forget(uid, keyword):
     return {"forgotten": cur.rowcount > 0}
 
 
+# ------------------------------------------------------------- phone
+# The bot can't reach the phone directly. It posts short commands to a private ntfy topic;
+# the ntfy app on the phone passes them to Tasker, which sets the alarm, calls, sends the
+# SMS or opens WhatsApp/Telegram. Format: SECRET|ACTION|field|field...
+def phone_on() -> bool:
+    return bool(os.getenv("PHONE_TOPIC", "").strip() and os.getenv("PHONE_SECRET", "").strip())
+
+
+def ntfy_base() -> str:
+    return os.getenv("NTFY_SERVER", "https://ntfy.sh").strip().rstrip("/")
+
+
+async def phone_send(action, *fields):
+    if not phone_on():
+        raise RuntimeError("phone is not set up yet: the user should send /telefon")
+    clean = [str(f).replace("|", "/") for f in fields]  # "|" separates the fields
+    body = "|".join([os.getenv("PHONE_SECRET").strip(), action] + clean)
+    r = await http.post(f"{ntfy_base()}/{os.getenv('PHONE_TOPIC').strip()}",
+                        content=body.encode("utf-8"),
+                        headers={"Title": "Bot", "Priority": "min", "Tags": "robot"})
+    if r.status_code >= 400:
+        raise RuntimeError(f"ntfy error {r.status_code}: {r.text[:100]}")
+    return True
+
+
+def contact_save(uid, name, phone=None, telegram=None):
+    old = db.execute("SELECT phone, telegram FROM contacts WHERE user_id=? AND name=?",
+                     (uid, name.strip())).fetchone()
+    phone = re.sub(r"[^\d+]", "", phone) if phone else (old["phone"] if old else None)
+    telegram = (telegram or (old["telegram"] if old else "") or "").lstrip("@") or None
+    db.execute("INSERT INTO contacts (user_id, name, phone, telegram) VALUES (?,?,?,?) "
+               "ON CONFLICT(user_id, name) DO UPDATE SET phone=excluded.phone, "
+               "telegram=excluded.telegram", (uid, name.strip(), phone, telegram))
+    db.commit()
+    return {"saved": name.strip(), "phone": phone, "telegram": telegram}
+
+
+def contact_list(uid):
+    return [dict(r) for r in db.execute(
+        "SELECT name, phone, telegram FROM contacts WHERE user_id=? ORDER BY name", (uid,))]
+
+
+def contact_delete(uid, name):
+    cur = db.execute("DELETE FROM contacts WHERE user_id=? AND name=?", (uid, name.strip()))
+    db.commit()
+    return {"deleted": cur.rowcount > 0}
+
+
+def find_contact(uid, to):
+    """A phone number as given, or a saved contact by name."""
+    text = str(to).strip()
+    if re.fullmatch(r"\+?[\d\s()\-]{5,}", text):
+        return {"name": text, "phone": re.sub(r"[^\d+]", "", text), "telegram": None}
+    if text.startswith("@"):
+        return {"name": text, "phone": None, "telegram": text[1:]}
+    wanted = header_key(text)
+    rows = contact_list(uid)
+    exact = [r for r in rows if header_key(r["name"]) == wanted]
+    if exact:
+        return exact[0]
+    partial = [r for r in rows if wanted and wanted in header_key(r["name"])]
+    if len(partial) == 1:
+        return partial[0]
+    return None
+
+
+def unknown_contact(to):
+    return {"error": f"No saved contact '{to}'. Ask the user for the number (and Telegram "
+                     f"username if needed), then save it with contact_save."}
+
+
+async def phone_alarm(uid, time, label=None, date=None):
+    """A real alarm in the phone's clock app. Android sets the next time HH:MM comes round,
+    so alarms more than a day ahead are sent later, on the day before."""
+    hour, minute = (int(x) for x in time.split(":")[:2])
+    now_dt = datetime.now(TZ).replace(tzinfo=None, second=0, microsecond=0)
+    day = parse_day(date)
+    target = datetime.combine(day, dtime(hour, minute))
+    if target <= now_dt:
+        if date:
+            return {"error": "That time has already passed."}
+        target += timedelta(days=1)  # "7:00" said in the evening = tomorrow morning
+    label = (label or "Bot")[:60]
+    if target - now_dt <= timedelta(hours=23, minutes=55):
+        await phone_send("ALARM", hour, minute, label)
+        return {"alarm_set_on_phone": target.strftime("%Y-%m-%d %H:%M"), "label": label}
+    send_at = (target - timedelta(hours=23)).strftime(FMT)
+    db.execute("INSERT INTO phone_queue (user_id, send_at, payload) VALUES (?,?,?)",
+               (uid, send_at, json.dumps(["ALARM", hour, minute, label], ensure_ascii=False)))
+    db.commit()
+    return {"alarm_scheduled": target.strftime("%Y-%m-%d %H:%M"), "label": label,
+            "note": f"It will be put on the phone at {send_at} (Android alarms only work "
+                    f"within the next 24 hours)."}
+
+
+async def phone_call(uid, to):
+    person = find_contact(uid, to)
+    if not person or not person.get("phone"):
+        return unknown_contact(to)
+    await phone_send("CALL", person["phone"])
+    return {"calling": person["name"], "number": person["phone"]}
+
+
+async def phone_sms(uid, to, text):
+    person = find_contact(uid, to)
+    if not person or not person.get("phone"):
+        return unknown_contact(to)
+    await phone_send("SMS", person["phone"], text)
+    return {"sms_sent_to": person["name"], "number": person["phone"], "text": text}
+
+
+async def phone_whatsapp(uid, to, text):
+    person = find_contact(uid, to)
+    if not person or not person.get("phone"):
+        return unknown_contact(to)
+    digits = re.sub(r"\D", "", person["phone"])
+    await phone_send("OPEN", f"https://wa.me/{digits}?text={quote(text, safe='')}")
+    return {"whatsapp_opened_for": person["name"],
+            "note": "WhatsApp opened with the message ready; the user taps Send."}
+
+
+async def phone_telegram(uid, to, text):
+    person = find_contact(uid, to)
+    if person and person.get("telegram"):
+        url = f"https://t.me/{person['telegram']}?text={quote(text, safe='')}"
+    else:  # no username: Telegram asks which chat to send it to
+        url = f"https://t.me/share/url?url={quote(text, safe='')}"
+    await phone_send("OPEN", url)
+    return {"telegram_opened_for": person["name"] if person else to,
+            "note": "Telegram opened with the message ready; the user taps Send."}
+
+
+async def phone_queue_job(bot_obj):
+    """Send alarms that were waiting until they are within 24 hours."""
+    for row in db.execute("SELECT id, payload FROM phone_queue WHERE sent=0 AND send_at <= ?",
+                          (now(),)).fetchall():
+        try:
+            await phone_send(*json.loads(row["payload"]))
+        except Exception:
+            log.exception("Queued phone command failed")
+            continue
+        db.execute("UPDATE phone_queue SET sent=1 WHERE id=?", (row["id"],))
+    db.commit()
+
+
 FUNCS = {f.__name__: f for f in [
     add_note, search_notes, delete_note, add_task, list_tasks, update_task,
     complete_task, delete_task, set_reminder, list_reminders, cancel_reminder,
@@ -2104,6 +2340,8 @@ FUNCS = {f.__name__: f for f in [
     todoist_delete_task, todoist_list_projects,
     save_program, get_program, log_workout, delete_workout, workout_history,
     finance_items, finance_add, finance_undo, finance_remember, finance_forget,
+    contact_save, contact_list, contact_delete, phone_alarm, phone_call, phone_sms,
+    phone_whatsapp, phone_telegram,
 ]}
 
 TIME_DESC = "Local time as 'YYYY-MM-DD HH:MM'"
@@ -2266,12 +2504,47 @@ FINANCE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"keyword": {"type": "string"}},
                       "required": ["keyword"]}},
 ]
+TO = {"type": "string", "description": "Saved contact name, phone number or @username"}
+PHONE_TOOLS = [
+    {"name": "phone_alarm",
+     "description": "Set a real alarm in the clock app of the user's Android phone.",
+     "input_schema": {"type": "object", "properties": {
+         "time": {"type": "string", "description": "'HH:MM' (24h)"},
+         "label": {"type": "string", "description": "Short alarm label"},
+         "date": {"type": "string", "description": "'YYYY-MM-DD'; omit for the next time it comes"}},
+         "required": ["time"]}},
+    {"name": "phone_call", "description": "Start a phone call from the user's phone.",
+     "input_schema": {"type": "object", "properties": {"to": TO}, "required": ["to"]}},
+    {"name": "phone_sms", "description": "Send an SMS from the user's phone.",
+     "input_schema": {"type": "object", "properties": {"to": TO, "text": {"type": "string"}},
+                      "required": ["to", "text"]}},
+    {"name": "phone_whatsapp",
+     "description": "Open WhatsApp on the phone with a message ready for a contact (user taps Send).",
+     "input_schema": {"type": "object", "properties": {"to": TO, "text": {"type": "string"}},
+                      "required": ["to", "text"]}},
+    {"name": "phone_telegram",
+     "description": "Open Telegram on the phone with a message ready for a contact (user taps Send).",
+     "input_schema": {"type": "object", "properties": {"to": TO, "text": {"type": "string"}},
+                      "required": ["to", "text"]}},
+    {"name": "contact_save", "description": "Save or update a contact (name, phone, Telegram username).",
+     "input_schema": {"type": "object", "properties": {
+         "name": {"type": "string", "description": "As the user calls them, e.g. 'Anam'"},
+         "phone": {"type": "string", "description": "With country code, e.g. +994501234567"},
+         "telegram": {"type": "string", "description": "Username without @"}},
+         "required": ["name"]}},
+    {"name": "contact_list", "description": "List saved contacts.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "contact_delete", "description": "Delete a saved contact.",
+     "input_schema": {"type": "object", "properties": {"name": {"type": "string"}},
+                      "required": ["name"]}},
+]
 LOCAL_TASK_TOOLS = {"add_task", "list_tasks", "update_task", "complete_task", "delete_task"}
 
 
 def active_tools():
     """With Todoist connected, tasks live there instead of the bot's own list."""
-    extra = WORKOUT_TOOLS + (FINANCE_TOOLS if finance_on() else [])
+    extra = WORKOUT_TOOLS + (FINANCE_TOOLS if finance_on() else []) + (
+        PHONE_TOOLS if phone_on() else [])
     if todoist_on():
         return [t for t in TOOLS if t["name"] not in LOCAL_TASK_TOOLS] + TODOIST_TOOLS + extra
     return TOOLS + extra
@@ -2343,6 +2616,17 @@ def system_prompt() -> str:
             "old → new Actual, Forecast and how much is left (or over). Use finance_undo if they "
             "say it was wrong. Answer questions about their spending with finance_items."
             if finance_on() else ""
+        )
+        + (
+            "\nPhone (Android): you can set real alarms (phone_alarm), start calls (phone_call), "
+            "send SMS (phone_sms) and open WhatsApp/Telegram with a message ready "
+            "(phone_whatsapp, phone_telegram; the user then taps Send). People are found in "
+            "saved contacts; if someone isn't saved, ask for the number and save it with "
+            "contact_save. Before calling or messaging anyone, show who and the exact text and "
+            "ask for a short yes, unless the user already confirmed it. Alarms need no "
+            "confirmation. Use phone_alarm when the user says alarm / wake me / zəngli saat / "
+            "oyat; use set_reminder for things they only need to read."
+            if phone_on() else ""
         )
     )
 
@@ -2571,6 +2855,11 @@ async def reset_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # --------------------------------------------------- background jobs
 async def check_reminders(ctx: ContextTypes.DEFAULT_TYPE):
+    if phone_on():
+        try:
+            await phone_queue_job(ctx.bot)
+        except Exception:
+            log.exception("Phone queue failed")
     due = db.execute(
         "SELECT id, user_id, text FROM reminders WHERE sent=0 AND remind_at <= ?", (now(),)
     ).fetchall()
@@ -2683,6 +2972,27 @@ async def sheet_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await send_long(update, text)
 
 
+async def phone_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/telefon: set-up values for ntfy + Tasker. /telefon test, /telefon yeni (new keys)."""
+    if not allowed(update) or not ALLOWED:
+        return
+    arg = fold(ctx.args[0]).translate(PLAIN) if ctx.args else ""
+    if arg == "test":
+        if not phone_on():
+            return await update.message.reply_text(T["phone_off"])
+        try:
+            await phone_send("TEST", T["phone_test_toast"])
+            return await update.message.reply_text(T["phone_test_sent"])
+        except Exception as e:
+            return await update.message.reply_text(f"⚠️ {e}")
+    if not phone_on() or arg in ("yeni", "new"):
+        save_setting("PHONE_TOPIC", "bot-" + secrets.token_hex(12))
+        save_setting("PHONE_SECRET", secrets.token_hex(8))
+    await update.message.reply_text(T["phone_setup"].format(server=ntfy_base()))
+    await update.message.reply_text(os.getenv("PHONE_TOPIC"))   # separate messages,
+    await update.message.reply_text(os.getenv("PHONE_SECRET"))  # easy to copy
+
+
 async def finance_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """This month's cash flow: Actual / Forecast for every CF item."""
     if not allowed(update):
@@ -2735,6 +3045,7 @@ SETTABLE = {
     "TODOIST_API_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_MODEL",
     "BOT_LANGUAGE", "VOICE_LANGUAGE", "TRANSCRIBE_MODEL", "TIMEZONE", "DAILY_BRIEF_TIME",
     "GOOGLE_SHEET_ID", "WORKOUT_CHECKIN_TIME", "FINANCE_SHEET_ID", "FINANCE_TAB",
+    "HEALTHCHECK_URL",
 }
 
 
@@ -2746,6 +3057,9 @@ def check_setting(key, value):
         if value.lower() == "off":
             return ""
         datetime.strptime(value, "%H:%M")
+    elif key == "HEALTHCHECK_URL":
+        if not value.startswith("https://"):
+            raise ValueError("must be an https:// link")
     elif key in ("GOOGLE_SHEET_ID", "FINANCE_SHEET_ID"):  # accept the whole link too
         found = re.search(r"/d/([A-Za-z0-9_-]+)", value)
         value = found.group(1) if found else value
@@ -2852,9 +3166,188 @@ def schedule_jobs(job_queue):
             job_queue.run_daily(callback, time=dtime(h, m, tzinfo=TZ), name=name)
 
 
+# ----------------------------------------------------------- diagnostics
+STARTED_AT = datetime.now()
+
+
+class RecentErrors(logging.Handler):
+    """Keeps the last few errors in memory so /status can show them."""
+
+    def __init__(self):
+        super().__init__(logging.ERROR)
+        self.items = deque(maxlen=8)
+
+    def emit(self, record):
+        try:
+            err = record.exc_info[1] if record.exc_info else None
+            detail = f"{type(err).__name__}: {str(err)[:150]}" if err else ""
+            self.items.append((datetime.now(TZ).strftime("%d.%m %H:%M"),
+                               record.getMessage()[:80], detail))
+        except Exception:
+            pass
+
+
+RECENT_ERRORS = RecentErrors()
+
+
+def diag_hint(e) -> str:
+    text = f"{type(e).__name__}: {e}"
+    low = text.lower()
+    if isinstance(e, asyncio.TimeoutError):
+        return T["diag_timeout"]
+    if "not supported for this document" in low:
+        return T["fin_xlsx"]
+    if "credit balance" in low:
+        hint = T["diag_credit"]
+    elif any(x in low for x in ("401", "authentication", "invalid x-api-key", "unauthorized",
+                                "incorrect api key")):
+        hint = T["diag_key"]
+    elif "403" in low or "permission" in low:
+        hint = T["diag_access"]
+    elif "404" in low or "not_found" in low or "not found" in low:
+        hint = T["diag_notfound"]
+    elif any(x in low for x in ("connect", "timeout", "name resolution", "network")):
+        hint = T["diag_network"]
+    else:
+        return str(e)[:160] or type(e).__name__
+    return f"{hint} ({text[:90]})"
+
+
+def human_uptime() -> str:
+    seconds = int((datetime.now() - STARTED_AT).total_seconds())
+    days, rest = divmod(seconds, 86400)
+    hours, minutes = rest // 3600, rest % 3600 // 60
+    u = T["diag_units"].split()
+    parts = [f"{days} {u[0]}"] if days else []
+    if days or hours:
+        parts.append(f"{hours} {u[1]}")
+    parts.append(f"{minutes} {u[2]}")
+    return " ".join(parts)
+
+
+async def run_check(label, check):
+    """One line of the report: ✅ / ❌ / ⚪ (not set up)."""
+    if check is None:
+        return f"⚪ {label}: {T['diag_off']}"
+    try:
+        detail = await asyncio.wait_for(check(), timeout=20)
+        return f"✅ {label}: {detail}"
+    except Exception as e:
+        return f"❌ {label}: {diag_hint(e)}"
+
+
+async def diag_ai():
+    await client.messages.create(model=MODEL, max_tokens=5,
+                                 messages=[{"role": "user", "content": "ping"}])
+    return MODEL
+
+
+async def diag_voice():
+    await stt.models.retrieve(TRANSCRIBE_MODEL)
+    return TRANSCRIBE_MODEL
+
+
+async def diag_todoist():
+    return f"{len(await td_projects(force=True))} {T['diag_projects']}"
+
+
+async def diag_gkey():
+    return json.loads(GSA_PATH.read_text()).get("client_email", "?")
+
+
+async def diag_workout():
+    title = (await sheet_meta(force=True))["properties"]["title"]
+    names, ids, _ = await tabs()
+    problems = [names[r] for r in ("dash", "log", "program") if ids[r] is None]
+    for role in ("log", "program"):
+        if ids[role] is not None:
+            problems += (await tab_columns(role, force=True))["essential_missing"]
+    if problems:
+        raise RuntimeError(T["diag_tabs"].format(items=", ".join(problems)) + " → /cedvel")
+    return title
+
+
+async def diag_finance():
+    layout = await fin_layout(force=True)
+    data = await fin_month()
+    return f"“{layout['tab']}” → {data['label']}, Actual {col_letter(data['cols']['actual'])}"
+
+
+async def diag_phone():
+    r = await http.get(f"{ntfy_base()}/v1/health")
+    if r.status_code >= 500:
+        raise RuntimeError(f"ntfy {r.status_code}")
+    return T["diag_phone_ok"]
+
+
+def diag_reminders():
+    rows = db.execute("SELECT remind_at FROM reminders WHERE sent=0 ORDER BY remind_at").fetchall()
+    nxt = T["diag_next"].format(when=rows[0]["remind_at"]) if rows else ""
+    return T["diag_reminders_val"].format(n=len(rows), next=nxt)
+
+
+def diag_server():
+    disk = shutil.disk_usage("/").free / 1e9
+    mem = "?"
+    try:
+        for line in open("/proc/meminfo"):
+            if line.startswith("MemAvailable"):
+                mem = int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    return T["diag_server_val"].format(disk=f"{disk:.1f}", mem=mem)
+
+
+async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/yoxla (/status): check every part of the bot and explain what's wrong."""
+    if not allowed(update):
+        return
+    await update.message.chat.send_action(ChatAction.TYPING)
+    now_local = datetime.now(TZ).strftime("%d.%m.%Y %H:%M")
+    lines = [T["diag_title"], "",
+             f"✅ {T['diag_bot']}: " + T["diag_uptime"].format(
+                 uptime=human_uptime(), time=now_local, tz=TZ.key)]
+    checks = [
+        (T["diag_ai"], diag_ai),
+        (T["diag_voice"], diag_voice if stt else None),
+        (T["diag_todoist"], diag_todoist if todoist_on() else None),
+        (T["diag_gkey"], diag_gkey if GSA_PATH.exists() else None),
+        (T["diag_workout"], diag_workout if sheets_on() else None),
+        (T["diag_finance"], diag_finance if finance_on() else None),
+        (T["diag_phone"], diag_phone if phone_on() else None),
+    ]
+    lines += await asyncio.gather(*(run_check(label, check) for label, check in checks))
+    lines.append(f"✅ {T['diag_reminders']}: {diag_reminders()}")
+    lines.append(f"✅ {T['diag_server']}: {diag_server()}")
+    lines.append("")
+    if RECENT_ERRORS.items:
+        lines.append(T["diag_errors"])
+        for when, what, detail in list(RECENT_ERRORS.items)[-4:]:
+            lines.append(f"• {when} {what}" + (f" · {detail}" if detail else ""))
+    else:
+        lines.append(T["diag_noerrors"])
+    lines += ["", T["diag_footer"]]
+    await send_long(update, "\n".join(lines))
+
+
+async def on_error(update, ctx: ContextTypes.DEFAULT_TYPE):
+    log.error("Unexpected error while handling an update", exc_info=ctx.error)
+
+
+async def heartbeat(ctx: ContextTypes.DEFAULT_TYPE):
+    """Optional: ping an uptime monitor (e.g. healthchecks.io) so you hear if the bot stops."""
+    url = os.getenv("HEALTHCHECK_URL", "").strip()
+    if url:
+        try:
+            await http.get(url, timeout=10)
+        except Exception:
+            log.warning("Heartbeat ping failed")
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # keeps the bot token out of logs
+    logging.getLogger().addHandler(RECENT_ERRORS)
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     # English and Azerbaijani names both work (Telegram commands allow only a-z, 0-9, _)
@@ -2872,6 +3365,9 @@ def main():
     app.add_handler(CommandHandler(["workout", "mesq"], workout_cmd))
     app.add_handler(CommandHandler(["sheet", "cedvel"], sheet_cmd))
     app.add_handler(CommandHandler(["finance", "maliyye"], finance_cmd))
+    app.add_handler(CommandHandler(["phone", "telefon"], phone_cmd))
+    app.add_handler(CommandHandler(["status", "yoxla"], status_cmd))
+    app.add_error_handler(on_error)
     app.add_handler(CallbackQueryHandler(workout_button, pattern=r"^wk:"))
     app.add_handler(MessageHandler(filters.Document.FileExtension("json"), json_file))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, voice_msg))
@@ -2879,6 +3375,7 @@ def main():
 
     app.job_queue.run_repeating(check_reminders, interval=30, first=5)
     app.job_queue.run_repeating(sheet_sync_job, interval=600, first=90)
+    app.job_queue.run_repeating(heartbeat, interval=300, first=30)
     schedule_jobs(app.job_queue)
 
     if not ALLOWED:
