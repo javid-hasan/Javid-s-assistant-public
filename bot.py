@@ -168,6 +168,11 @@ TEXTS = {
         "sheet_off": "Google Sheet isn't connected yet. Send the key file, then /setkey "
                      "GOOGLE_SHEET_ID with the sheet's link.",
         "sheet_backfill": "📥 Copied your {n} earlier workouts into the Log.",
+        "sheet_columns": "\n\n🧩 Your own columns:\nProgram: {program}\nLog: {log}",
+        "sheet_missing": "\n\n⚠️ I couldn't find these columns: {fields}. Please keep their "
+                         "header names.",
+        "sheet_moved": "\n\n⚠️ The Log columns have moved. Send /sheet rebuild to update the "
+                       "Dashboard formulas.",
         "fin_ok": "✅ Finance sheet connected: {title} → “{tab}”\nThis month: {month}, Actual "
                   "column {col}, {n} items found.",
         "fin_bad": "⚠️ I can't read the finance sheet yet: {err}",
@@ -286,6 +291,11 @@ TEXTS = {
         "sheet_off": "Google Sheet hələ qoşulmayıb. Açar faylını göndərin, sonra /setkey "
                      "GOOGLE_SHEET_ID və cədvəlin linkini yazın.",
         "sheet_backfill": "📥 Əvvəlki {n} məşqinizi Gündəlik vərəqinə köçürdüm.",
+        "sheet_columns": "\n\n🧩 Sizin əlavə sütunlarınız:\nProqram: {program}\nGündəlik: {log}",
+        "sheet_missing": "\n\n⚠️ Bu sütunları tapa bilmədim: {fields}. Zəhmət olmasa onların "
+                         "başlıq adlarını saxlayın.",
+        "sheet_moved": "\n\n⚠️ Gündəlik sütunlarının yeri dəyişib. Panel formullarını yeniləmək "
+                       "üçün /cedvel yenilə göndərin.",
         "fin_ok": "✅ Maliyyə cədvəli qoşuldu: {title} → “{tab}”\nBu ay: {month}, Actual sütunu "
                   "{col}, {n} maddə tapıldı.",
         "fin_bad": "⚠️ Maliyyə cədvəlini hələ oxuya bilmirəm: {err}",
@@ -689,20 +699,102 @@ SHEET_TEXTS = {
     },
 }
 
-# Dashboard formulas. {L} = Log tab, {D} = Dashboard tab (filled in at setup).
-F_WEEKLY = r'''=IFERROR(SORT(QUERY({L}!A2:O,"select B, sum(O), sum(H) where K = '✅' and B is not null group by B order by B desc limit 12 label B '', sum(O) '', sum(H) ''",0),1,TRUE),"")'''
-F_TOP = r'''=IFERROR(QUERY({L}!A2:O,"select D, sum(H) where K = '✅' and H > 0 group by D order by sum(H) desc limit 10 label D '', sum(H) ''",0),"")'''
-F_SPLIT = r'''=IFERROR(QUERY({L}!A2:O,"select C, sum(O) where K = '✅' and O > 0 group by C order by sum(O) desc label C '', sum(O) ''",0),"")'''
-F_EXERCISES = r'''=IFERROR(SORT(UNIQUE(FILTER({L}!D2:D,{L}!D2:D<>"",{L}!D2:D<>"—"))),"")'''
-F_PROGRESS = r'''=IFERROR(QUERY({L}!A2:O,"select A, max(G), sum(H) where D = '"&SUBSTITUTE({D}!$B$7,"'","")&"' and G > 0 group by A order by A label A '', max(G) '', sum(H) ''",0),"")'''
-K_DONE = r'''=SUMIFS({L}!O2:O,{L}!K2:K,"✅")'''
-K_WEEK = r'''=SUMIFS({L}!O2:O,{L}!K2:K,"✅",{L}!A2:A,">="&(TODAY()-WEEKDAY(TODAY(),3)))'''
-K_VOLUME = r'''=SUMIFS({L}!H2:H,{L}!K2:K,"✅")'''
-K_RATE = r'''=IFERROR(SUMIFS({L}!O2:O,{L}!K2:K,"✅")/SUM({L}!O2:O),0)'''
-K_LAST = r'''=IF(MAXIFS({L}!A2:A,{L}!K2:K,"✅")=0,"—",MAXIFS({L}!A2:A,{L}!K2:K,"✅"))'''
-K_PR = r'''=IFERROR(MAXIFS({L}!G2:G,{L}!D2:D,B7),0)&" {KG}"'''
-F_RECORDS = r'''=IFERROR(QUERY({L}!A2:O,"select D, max(G) where G > 0 group by D order by max(G) desc limit 15 label D '', max(G) ''",0),"")'''
-F_TREND = r'''=IF(A{R}="","",IFERROR(SPARKLINE(FILTER({L}!$G$2:$G,{L}!$D$2:$D=A{R},{L}!$G$2:$G>0)),""))'''
+# Dashboard formulas. {L} = Log tab, {D} = Dashboard tab, and {DATE}, {EX}… = the Log
+# columns found by their headers (filled in at setup, so added columns are fine).
+F_WEEKLY = r"""=IFERROR(SORT(QUERY({L}!A2:{LAST},"select {WEEK}, sum({CNT}), sum({VOL}) where {ST} = '✅' and {WEEK} is not null group by {WEEK} order by {WEEK} desc limit 12 label {WEEK} '', sum({CNT}) '', sum({VOL}) ''",0),1,TRUE),"")"""
+F_TOP = r"""=IFERROR(QUERY({L}!A2:{LAST},"select {EX}, sum({VOL}) where {ST} = '✅' and {VOL} > 0 group by {EX} order by sum({VOL}) desc limit 10 label {EX} '', sum({VOL}) ''",0),"")"""
+F_SPLIT = r"""=IFERROR(QUERY({L}!A2:{LAST},"select {WORKOUT}, sum({CNT}) where {ST} = '✅' and {CNT} > 0 group by {WORKOUT} order by sum({CNT}) desc label {WORKOUT} '', sum({CNT}) ''",0),"")"""
+F_EXERCISES = r"""=IFERROR(SORT(UNIQUE(FILTER({L}!{EX}2:{EX},{L}!{EX}2:{EX}<>"",{L}!{EX}2:{EX}<>"—"))),"")"""
+F_PROGRESS = r"""=IFERROR(QUERY({L}!A2:{LAST},"select {DATE}, max({W}), sum({VOL}) where {EX} = '"&SUBSTITUTE({D}!$B$7,"'","")&"' and {W} > 0 group by {DATE} order by {DATE} label {DATE} '', max({W}) '', sum({VOL}) ''",0),"")"""
+K_DONE = r"""=SUMIFS({L}!{CNT}2:{CNT},{L}!{ST}2:{ST},"✅")"""
+K_WEEK = r"""=SUMIFS({L}!{CNT}2:{CNT},{L}!{ST}2:{ST},"✅",{L}!{DATE}2:{DATE},">="&(TODAY()-WEEKDAY(TODAY(),3)))"""
+K_VOLUME = r"""=SUMIFS({L}!{VOL}2:{VOL},{L}!{ST}2:{ST},"✅")"""
+K_RATE = r"""=IFERROR(SUMIFS({L}!{CNT}2:{CNT},{L}!{ST}2:{ST},"✅")/SUM({L}!{CNT}2:{CNT}),0)"""
+K_LAST = r"""=IF(MAXIFS({L}!{DATE}2:{DATE},{L}!{ST}2:{ST},"✅")=0,"—",MAXIFS({L}!{DATE}2:{DATE},{L}!{ST}2:{ST},"✅"))"""
+K_PR = '=IFERROR(MAXIFS({L}!{W}2:{W},{L}!{EX}2:{EX},B7),0)&" {KG}"'
+F_RECORDS = r"""=IFERROR(QUERY({L}!A2:{LAST},"select {EX}, max({W}) where {W} > 0 group by {EX} order by max({W}) desc limit 15 label {EX} '', max({W}) ''",0),"")"""
+F_TREND = r"""=IF(A{R}="","",IFERROR(SPARKLINE(FILTER({L}!${W}$2:${W},{L}!${EX}$2:${EX}=A{R},{L}!${W}$2:${W}>0)),""))"""
+
+LOG_FIELDS = ("date", "week", "workout", "exercise", "sets", "reps", "weight", "volume",
+              "duration", "distance", "status", "feeling", "notes", "wid", "count")
+PROGRAM_FIELDS = ("day", "workout", "exercise", "sets", "reps", "weight", "duration", "notes")
+DEFAULT_COLS = {
+    "log": {"map": {f: i for i, f in enumerate(LOG_FIELDS)}, "extras": [], "width": 15,
+            "missing": []},
+    "program": {"map": {f: i for i, f in enumerate(PROGRAM_FIELDS)}, "extras": [], "width": 8,
+                "missing": []},
+}
+_cols = {}
+
+
+def header_key(text) -> str:
+    return re.sub(r"[^0-9a-z]", "", fold(str(text)).translate(PLAIN))
+
+
+def log_letters(cols):
+    """Column letters of the Log fields used by the dashboard formulas."""
+    m = cols["map"]
+
+    def letter(field, default):
+        return col_letter(m.get(field, default))
+
+    return {"{DATE}": letter("date", 0), "{WEEK}": letter("week", 1),
+            "{WORKOUT}": letter("workout", 2), "{EX}": letter("exercise", 3),
+            "{W}": letter("weight", 6), "{VOL}": letter("volume", 7),
+            "{ST}": letter("status", 10), "{CNT}": letter("count", 14),
+            "{LAST}": col_letter(cols["width"] - 1)}
+
+
+def fill_formula(formula, cols, **names):
+    out = formula
+    for key, value in list(names.items()) + list(log_letters(cols).items()):
+        out = out.replace(key if key.startswith("{") else "{" + key + "}", value)
+    return out
+
+
+async def tab_columns(role, force=False):
+    """Find the columns of the Log or Program tab by their header names (row 1).
+    Columns the user added are returned as 'extras' (position + header)."""
+    cached = _cols.get(role)
+    if cached and not force and time.time() - cached["at"] < 120:
+        return cached
+    fields = LOG_FIELDS if role == "log" else PROGRAM_FIELDS
+    headers_key = "log_headers" if role == "log" else "program_headers"
+    known = {}
+    for texts in SHEET_TEXTS.values():
+        for field, header in zip(fields, texts[headers_key]):
+            known[header_key(header)] = field
+    names, _, _ = await tabs()
+    data = await gsheet("GET", f"/values/{a1(names[role], 'A1:ZZ1')}")
+    header = (data.get("values") or [[]])[0]
+    found, extras = {}, []
+    for c, h in enumerate(header):
+        k = header_key(h)
+        if not k:
+            continue
+        field = known.get(k)
+        if field and field not in found:
+            found[field] = c
+        else:
+            extras.append((c, str(h).strip()))
+    # A renamed header (no columns added overall) keeps its old meaning.
+    filled = sum(1 for h in header if header_key(h))
+    for i, field in enumerate(fields):
+        if field in found:
+            continue
+        taken = i in found.values()
+        extra_here = next((x for x in extras if x[0] == i), None)
+        if not taken and (extra_here is None or filled <= len(fields)):
+            found[field] = i
+            if extra_here:
+                extras.remove(extra_here)
+    texts = SHEET_TEXTS[LANG][headers_key]
+    result = {"map": found, "extras": extras, "at": time.time(),
+              "width": max(list(found.values()) + [c for c, _ in extras] + [len(fields) - 1]) + 1,
+              "missing": [texts[i] for i, f in enumerate(fields) if f not in found]}
+    _cols[role] = result
+    return result
+
 
 _gcreds = {"c": None}
 _meta = {"at": 0.0, "data": None}
@@ -879,12 +971,12 @@ def build_program(sid, name):
     return reqs, values
 
 
-def build_data(sid, name, log_name, dash_name):
+def build_data(sid, name, log_name, dash_name, cols=None):
     S = SHEET_TEXTS[LANG]
-    L, D = qt(log_name), qt(dash_name)
+    cols = cols or DEFAULT_COLS["log"]
 
     def fill(formula):
-        return formula.replace("{L}", L).replace("{D}", D)
+        return fill_formula(formula, cols, L=qt(log_name), D=qt(dash_name))
 
     row2 = [""] * 15
     row2[0], row2[4], row2[7] = fill(F_WEEKLY), fill(F_TOP), fill(F_SPLIT)
@@ -895,12 +987,13 @@ def build_data(sid, name, log_name, dash_name):
     return reqs, values
 
 
-def build_dashboard(sid, name, log_name, data_id):
+def build_dashboard(sid, name, log_name, data_id, cols=None):
     S = SHEET_TEXTS[LANG]
-    L, D = qt(log_name), qt(name)
+    D = qt(name)
+    cols = cols or DEFAULT_COLS["log"]
 
     def fill(formula, row=None):
-        out = formula.replace("{L}", L).replace("{D}", D).replace("{KG}", S["kg"])
+        out = fill_formula(formula, cols, L=qt(log_name), D=D, KG=S["kg"])
         return out.replace("{R}", str(row)) if row else out
 
     accents = ["#16a34a", "#2563eb", "#9333ea", "#ea580c", "#0f766e"]
@@ -1015,11 +1108,16 @@ async def ensure_sheet(rebuild=False):
             if role == "data":
                 p["hidden"] = True
             reqs.append({"addSheet": {"properties": p}})
+    log_cols = DEFAULT_COLS["log"]
+    if "log" not in missing:  # an existing Log may have extra or moved columns
+        log_cols = await tab_columns("log", force=True)
     builders = {
         "log": lambda: build_log(ids["log"], names["log"]),
         "program": lambda: build_program(ids["program"], names["program"]),
-        "data": lambda: build_data(ids["data"], names["data"], names["log"], names["dash"]),
-        "dash": lambda: build_dashboard(ids["dash"], names["dash"], names["log"], ids["data"]),
+        "data": lambda: build_data(ids["data"], names["data"], names["log"], names["dash"],
+                                   log_cols),
+        "dash": lambda: build_dashboard(ids["dash"], names["dash"], names["log"], ids["data"],
+                                        log_cols),
     }
     for role in ROLES:
         if role in missing:
@@ -1036,6 +1134,7 @@ async def ensure_sheet(rebuild=False):
     await gsheet("POST", "/values:batchUpdate",
                  json={"valueInputOption": "USER_ENTERED", "data": values})
     await sheet_meta(force=True)
+    _cols.clear()
     return title
 
 
@@ -1085,6 +1184,8 @@ def fmt_exercise(e) -> str:
     line = f"• {e.get('name', '?')}" + (f": {detail.strip()}" if detail.strip() else "")
     if e.get("notes"):
         line += f" ({e['notes']})"
+    for header, value in (e.get("extra") or {}).items():  # the user's own columns
+        line += f" · {header}: {value}"
     return line
 
 
@@ -1148,49 +1249,86 @@ def weekday_code(text):
     return t[:2].upper() if t[:2].upper() in WEEKDAYS else None  # "MO", "Mon", "Monday"
 
 
-def log_rows(wid, day, title, status, exercises, duration_min, feeling, notes):
-    """Rows for the Log tab: one per exercise."""
+def log_rows(wid, day, title, status, exercises, duration_min, feeling, notes,
+             cols=None, extra=None):
+    """Rows for the Log tab: one per exercise, placed by the columns' headers."""
+    cols = cols or DEFAULT_COLS["log"]
+    where = cols["map"]
+    extra_cols = {header_key(h): c for c, h in cols["extras"]}
     serial = (day - EPOCH).days
     week = serial - day.weekday()  # Monday of that week
     mark = "✅" if status == "done" else "⏭"
-    extra = f"⏱ {num(duration_min)} {T['unit_min']}" if duration_min else ""
-    note = " · ".join(x for x in (notes or "", extra) if x)
+    took = f"⏱ {num(duration_min)} {T['unit_min']}" if duration_min else ""
+    note = " · ".join(x for x in (notes or "", took) if x)
     rows = []
     for i, e in enumerate(exercises or [{"name": "—"}]):
         weight = to_number(e.get("weight_kg")) or ""
         reps = total_reps(e)
-        volume = round(reps * float(weight), 1) if reps and weight else ""
         first = i == 0
-        rows.append([serial, week, text_cell(title), text_cell(e.get("name") or "—"),
-                     to_number(e.get("sets")) or "", reps_cell(e.get("reps")), weight, volume,
-                     to_number(e.get("duration_min")) or "", to_number(e.get("distance_km")) or "",
-                     mark,
-                     text_cell(feeling) if first else "", text_cell(note) if first else "",
-                     wid, 1 if first else 0])
+        values = {
+            "date": serial, "week": week, "workout": text_cell(title),
+            "exercise": text_cell(e.get("name") or "—"), "sets": to_number(e.get("sets")) or "",
+            "reps": reps_cell(e.get("reps")), "weight": weight,
+            "volume": round(reps * float(weight), 1) if reps and weight else "",
+            "duration": to_number(e.get("duration_min")) or "",
+            "distance": to_number(e.get("distance_km")) or "", "status": mark,
+            "feeling": text_cell(feeling) if first else "", "notes": text_cell(note) if first else "",
+            "wid": wid, "count": 1 if first else 0}
+        row = [""] * cols["width"]
+        for field, value in values.items():
+            if field in where:
+                row[where[field]] = value
+        own = {**(extra or {}), **(e.get("extra") or {})} if first else dict(e.get("extra") or {})
+        for header, value in own.items():
+            c = extra_cols.get(header_key(header))
+            if c is not None:
+                row[c] = text_cell(value) if isinstance(value, str) else value
+        rows.append(row)
     return rows
 
 
-def program_rows(days):
+def program_rows(days, cols=None):
+    cols = cols or DEFAULT_COLS["program"]
+    where = cols["map"]
+    extra_cols = {header_key(h): c for c, h in cols["extras"]}
     S = SHEET_TEXTS[LANG]
     rows = []
     for d in sorted(days, key=lambda d: WEEKDAYS.index(d["weekday"])):
         if rows:
-            rows.append([""] * 8)  # blank line between days
+            rows.append([""] * cols["width"])  # blank line between days
         for i, e in enumerate(d.get("exercises") or [{}]):
-            rows.append([S["days"][WEEKDAYS.index(d["weekday"])] if i == 0 else "",
-                         text_cell(d.get("title", "")) if i == 0 else "",
-                         text_cell(e.get("name", "")), e.get("sets") or "",
-                         reps_cell(e.get("reps")), e.get("weight_kg") or "",
-                         e.get("duration_min") or "", text_cell(e.get("notes", ""))])
+            values = {
+                "day": S["days"][WEEKDAYS.index(d["weekday"])] if i == 0 else "",
+                "workout": text_cell(d.get("title", "")) if i == 0 else "",
+                "exercise": text_cell(e.get("name", "")), "sets": e.get("sets") or "",
+                "reps": reps_cell(e.get("reps")), "weight": e.get("weight_kg") or "",
+                "duration": e.get("duration_min") or "", "notes": text_cell(e.get("notes", ""))}
+            row = [""] * cols["width"]
+            for field, value in values.items():
+                if field in where:
+                    row[where[field]] = value
+            for header, value in (e.get("extra") or {}).items():
+                c = extra_cols.get(header_key(header))
+                if c is not None:
+                    row[c] = text_cell(value) if isinstance(value, str) else value
+            rows.append(row)
     return rows
 
 
-def parse_program(rows):
-    """Read the Program tab back (the user may have edited it)."""
+def parse_program(rows, cols=None):
+    """Read the Program tab back (the user may have edited it or added columns)."""
+    cols = cols or DEFAULT_COLS["program"]
+    where = cols["map"]
+
+    def cell(r, field):
+        i = where.get(field)
+        return r[i] if i is not None and i < len(r) else ""
+
     days, current = [], None
     for raw in rows:
-        r = (list(raw) + [""] * 8)[:8]
-        day_text, title, name = str(r[0]).strip(), str(r[1]).strip(), str(r[2]).strip()
+        r = list(raw)
+        day_text = str(cell(r, "day")).strip()
+        title, name = str(cell(r, "workout")).strip(), str(cell(r, "exercise")).strip()
         if day_text:
             code = weekday_code(day_text)
             current = {"weekday": code, "title": title or T["wk_title"], "exercises": []} if code else None
@@ -1200,25 +1338,31 @@ def parse_program(rows):
             current["title"] = title
         if current and name:
             ex = {"name": name}
-            for key, idx in (("sets", 3), ("reps", 4), ("weight_kg", 5), ("duration_min", 6),
-                             ("notes", 7)):
-                if r[idx] in ("", None):
+            for key, field in (("sets", "sets"), ("reps", "reps"), ("weight_kg", "weight"),
+                               ("duration_min", "duration"), ("notes", "notes")):
+                value = cell(r, field)
+                if value in ("", None):
                     continue
                 if key == "reps":
-                    ex[key] = cell_id(r[idx])
+                    ex[key] = cell_id(value)
                 elif key == "notes":
-                    ex[key] = str(r[idx])
+                    ex[key] = str(value)
                 else:  # sets, weight, minutes: keep the number even if typed as "60 kq"
-                    value = to_number(r[idx])
-                    ex[key] = clean_num(value) if value is not None else str(r[idx])
+                    number = to_number(value)
+                    ex[key] = clean_num(number) if number is not None else str(value)
+            own = {h: clean_num(r[c]) for c, h in cols["extras"] if c < len(r) and r[c] not in ("", None)}
+            if own:
+                ex["extra"] = own
             current["exercises"].append(ex)
     return days
 
 
 async def sheet_write_program(days):
     names, _, _ = await tabs()
-    await gsheet("POST", f"/values/{a1(names['program'], 'A2:H1000')}:clear", json={})
-    rows = program_rows(days)
+    cols = await tab_columns("program")
+    last = col_letter(cols["width"] - 1)  # only columns that have a header are cleared
+    await gsheet("POST", f"/values/{a1(names['program'], f'A2:{last}1000')}:clear", json={})
+    rows = program_rows(days, cols)
     if rows:
         await gsheet("PUT", f"/values/{a1(names['program'], 'A2')}",
                      params={"valueInputOption": "USER_ENTERED"}, json={"values": rows})
@@ -1226,7 +1370,8 @@ async def sheet_write_program(days):
 
 async def sheet_append(rows, pick=None):
     names, _, _ = await tabs()
-    await gsheet("POST", f"/values/{a1(names['log'], 'A1:O1')}:append",
+    last = col_letter(max(len(r) for r in rows) - 1)
+    await gsheet("POST", f"/values/{a1(names['log'], f'A1:{last}1')}:append",
                  params={"valueInputOption": "USER_ENTERED", "insertDataOption": "OVERWRITE"},
                  json={"values": rows})
     if pick:  # pre-select an exercise on the dashboard the first time
@@ -1242,37 +1387,51 @@ async def sheet_append(rows, pick=None):
 async def sheet_logs():
     """All workouts from the Log tab, grouped (includes rows the user typed in)."""
     names, _, _ = await tabs()
-    data = await gsheet("GET", f"/values/{a1(names['log'], 'A2:O5000')}", params={
+    cols = await tab_columns("log")
+    where = cols["map"]
+    last = col_letter(cols["width"] - 1)
+    data = await gsheet("GET", f"/values/{a1(names['log'], f'A2:{last}5000')}", params={
         "valueRenderOption": "UNFORMATTED_VALUE", "dateTimeRenderOption": "SERIAL_NUMBER"})
+
+    def cell(r, field):
+        i = where.get(field)
+        return r[i] if i is not None and i < len(r) else ""
+
     groups = {}
     for raw in data.get("values", []):
-        r = (list(raw) + [""] * 15)[:15]
-        day = cell_date(r[0])
+        r = list(raw)
+        day = cell_date(cell(r, "date"))
         if not day:
             continue
-        wid = cell_id(r[13])
-        g = groups.setdefault(wid or f"{day}|{r[2]}", {
-            "id": wid or None, "date": day.isoformat(), "title": str(r[2]),
-            "status": "skipped" if r[10] == "⏭" else "done", "exercises": [],
+        wid = cell_id(cell(r, "wid"))
+        g = groups.setdefault(wid or f"{day}|{cell(r, 'workout')}", {
+            "id": wid or None, "date": day.isoformat(), "title": str(cell(r, "workout")),
+            "status": "skipped" if cell(r, "status") == "⏭" else "done", "exercises": [],
             "feeling": "", "notes": ""})
-        if r[11] and not g["feeling"]:
-            g["feeling"] = str(r[11])
-        if r[12] and not g["notes"]:
-            g["notes"] = str(r[12])
-        name = str(r[3]).strip()
+        for field in ("feeling", "notes"):
+            if cell(r, field) and not g[field]:
+                g[field] = str(cell(r, field))
+        name = str(cell(r, "exercise")).strip()
         if name and name != "—":
             ex = {"name": name}
-            for key, idx in (("sets", 4), ("reps", 5), ("weight_kg", 6), ("duration_min", 8),
-                             ("distance_km", 9)):
-                if r[idx] not in ("", None):
-                    ex[key] = clean_num(r[idx])
+            for key, field in (("sets", "sets"), ("reps", "reps"), ("weight_kg", "weight"),
+                               ("duration_min", "duration"), ("distance_km", "distance")):
+                if cell(r, field) not in ("", None):
+                    ex[key] = clean_num(cell(r, field))
+            own = {h: clean_num(r[c]) for c, h in cols["extras"] if c < len(r) and r[c] not in ("", None)}
+            if own:
+                ex["extra"] = own
             g["exercises"].append(ex)
     return sorted(groups.values(), key=lambda g: g["date"])
 
 
 async def sheet_delete_rows(wid):
     names, ids, _ = await tabs()
-    data = await gsheet("GET", f"/values/{a1(names['log'], 'N2:N5000')}",
+    cols = await tab_columns("log")
+    if "wid" not in cols["map"]:
+        return 0
+    letter = col_letter(cols["map"]["wid"])
+    data = await gsheet("GET", f"/values/{a1(names['log'], f'{letter}2:{letter}5000')}",
                         params={"valueRenderOption": "UNFORMATTED_VALUE"})
     rows = [i for i, r in enumerate(data.get("values", []), start=1) if r and cell_id(r[0]) == str(wid)]
     reqs = [{"deleteDimension": {"range": {"sheetId": ids["log"], "dimension": "ROWS",
@@ -1287,15 +1446,16 @@ async def sheet_backfill(uid):
     """After connecting: copy the saved program and earlier workouts into empty tabs."""
     names, _, _ = await tabs()
     program, _ = get_program_row(uid)
-    if program and not (await gsheet("GET", f"/values/{a1(names['program'], 'A2:C3')}")).get("values"):
+    if program and not (await gsheet("GET", f"/values/{a1(names['program'], 'A2:Z3')}")).get("values"):
         await sheet_write_program(program["days"])
-    if (await gsheet("GET", f"/values/{a1(names['log'], 'A2:A3')}")).get("values"):
+    if (await gsheet("GET", f"/values/{a1(names['log'], 'A2:Z3')}")).get("values"):
         return 0
+    cols = await tab_columns("log")
     rows, copied = [], 0
     for r in db.execute("SELECT * FROM workouts WHERE user_id=? ORDER BY date, id", (uid,)):
         rows += log_rows(r["id"], parse_day(r["date"]), r["title"], r["status"],
                          json.loads(r["exercises"] or "[]"), r["duration_min"], r["feeling"],
-                         r["notes"])
+                         r["notes"], cols)
         copied += 1
     if rows:
         await sheet_append(rows)
@@ -1322,9 +1482,11 @@ async def current_program(uid):
     if sheets_on():
         try:
             names, _, _ = await tabs()
-            data = await gsheet("GET", f"/values/{a1(names['program'], 'A2:H1000')}",
+            cols = await tab_columns("program")
+            last = col_letter(cols["width"] - 1)
+            data = await gsheet("GET", f"/values/{a1(names['program'], f'A2:{last}1000')}",
                                 params={"valueRenderOption": "UNFORMATTED_VALUE"})
-            days = parse_program(data.get("values", []))
+            days = parse_program(data.get("values", []), cols)
             if days:
                 program = {**(program or {"name": names["program"]}), "days": days}
         except Exception:
@@ -1362,11 +1524,17 @@ async def get_program(uid):
     out = {"program": program, "today": program_day(program, today_date())}
     if sheets_on():
         out["sheet_url"] = sheet_url()
+        try:
+            out["users_own_columns"] = {
+                "program": [h for _, h in (await tab_columns("program"))["extras"]],
+                "log": [h for _, h in (await tab_columns("log"))["extras"]]}
+        except Exception:
+            log.exception("Reading the sheet's columns failed")
     return out
 
 
 async def log_workout(uid, exercises, date=None, title=None, duration_min=None,
-                      feeling=None, notes=None, status="done"):
+                      feeling=None, notes=None, status="done", extra=None):
     day = parse_day(date)
     if not title:
         planned = program_day(await current_program(uid), day)
@@ -1382,8 +1550,9 @@ async def log_workout(uid, exercises, date=None, title=None, duration_min=None,
     if sheets_on():
         try:
             pick = next((e.get("name") for e in exercises if e.get("weight_kg")), None)
+            cols = await tab_columns("log")
             await sheet_append(log_rows(cur.lastrowid, day, title, status, exercises,
-                                        duration_min, feeling, notes), pick)
+                                        duration_min, feeling, notes, cols, extra), pick)
             result["sheet"] = "saved"
         except Exception as e:
             log.exception("Writing the workout to the sheet failed")
@@ -1910,7 +2079,9 @@ EXERCISE = {"type": "object", "properties": {
     "weight_kg": {"type": "number"},
     "duration_min": {"type": "number", "description": "For cardio or timed work"},
     "distance_km": {"type": "number"},
-    "notes": {"type": "string"}},
+    "notes": {"type": "string"},
+    "extra": {"type": "object", "description": "Values for the user's own sheet columns, keyed "
+                                               "by the exact column header"}},
     "required": ["name"]}
 DAY_DESC = "Local date 'YYYY-MM-DD'; omit for today"
 WORKOUT_TOOLS = [
@@ -1939,7 +2110,9 @@ WORKOUT_TOOLS = [
          "duration_min": {"type": "number"},
          "feeling": {"type": "string", "description": "How the user felt, in their words"},
          "notes": {"type": "string"},
-         "status": {"type": "string", "enum": ["done", "skipped"]}},
+         "status": {"type": "string", "enum": ["done", "skipped"]},
+         "extra": {"type": "object", "description": "Workout-level values for the user's own "
+                                                    "Log columns, keyed by the exact header"}},
          "required": ["exercises"]}},
     {"name": "delete_workout", "description": "Delete a logged workout by its ID.",
      "input_schema": {"type": "object", "properties": {"workout_id": {"type": "integer"}},
@@ -2040,7 +2213,10 @@ def system_prompt() -> str:
         + (f"Google Sheet is connected ({sheet_url()}): save_program also fills the Program tab, "
            "which the user may edit directly (get_program reads it), and every log_workout adds "
            "rows to the Log tab that feed the Dashboard charts. Share the link when the user "
-           "asks about their progress dashboard." if sheets_on()
+           "asks about their progress dashboard. The user may have added their own columns "
+           "(users_own_columns in get_program): program exercises carry them in 'extra' (keep "
+           "those values when re-saving a program), and when logging, put values the user "
+           "mentions for their own Log columns into 'extra', keyed by the exact header." if sheets_on()
            else "Google Sheet is not connected yet.")
         + (
             "\nPersonal finance: the user tracks money in their own cash-flow sheet (all AZN). "
@@ -2353,7 +2529,7 @@ async def workout_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def sheet_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Link to the workout sheet (and repair any missing tabs)."""
+    """Link to the workout sheet, the columns the bot found, and repair of missing tabs."""
     if not allowed(update):
         return
     if not sheets_on():
@@ -2362,11 +2538,33 @@ async def sheet_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "yenile", "rebuild", "refresh", "reset")
     try:
         await ensure_sheet(rebuild=rebuild)
+        program_cols = await tab_columns("program", force=True)
+        log_cols = await tab_columns("log", force=True)
     except Exception:
         log.exception("Sheet check failed")
         return await update.message.reply_text(T["sheet_bad"])
-    text = T["sheet_rebuilt"] if rebuild else T["sheet_link"]
-    await update.message.reply_text(text.format(url=sheet_url()))
+    text = (T["sheet_rebuilt"] if rebuild else T["sheet_link"]).format(url=sheet_url())
+
+    def own(cols):
+        return ", ".join(f"{h} ({col_letter(c)})" for c, h in cols["extras"]) or T["none"]
+
+    text += T["sheet_columns"].format(program=own(program_cols), log=own(log_cols))
+    missing = program_cols["missing"] + log_cols["missing"]
+    if missing:
+        text += T["sheet_missing"].format(fields=", ".join(missing))
+    if not rebuild:  # are the dashboard formulas still pointing at the right Log columns?
+        try:
+            names, _, _ = await tabs()
+            current = await gsheet("GET", f"/values/{a1(names['dash'], 'A4')}",
+                                   params={"valueRenderOption": "FORMULA"})
+            formula = ((current.get("values") or [[""]])[0] or [""])[0]
+            letters = log_letters(log_cols)
+            if formula and sorted(set(re.findall(r"!\$?([A-Z]+)\$?2:", str(formula)))) != sorted(
+                    {letters["{CNT}"], letters["{ST}"]}):
+                text += T["sheet_moved"]
+        except Exception:
+            log.exception("Dashboard formula check failed")
+    await send_long(update, text)
 
 
 async def finance_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
